@@ -50,6 +50,22 @@ def test_proxy_forwarding():
 
 
 @respx.mock
+def test_proxy_preserves_client_api_key():
+    backend_url = "http://test-backend:8321"
+    route = respx.get(f"{backend_url}/api/status").mock(
+        return_value=Response(200, json={"connected": True})
+    )
+    app = create_app(backend_url=backend_url, api_key="server-bootstrap-key")
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    response = client.get("/proxy/api/status", headers={"X-API-Key": "mif_sk_user-key"})
+
+    assert response.status_code == 200
+    assert route.calls.last.request.headers.get_list("X-API-Key") == ["mif_sk_user-key"]
+
+
+@respx.mock
 def test_proxy_upstream_error_502():
     backend_url = "http://non-existent-backend:8321"
     respx.get(f"{backend_url}/api/status").mock(

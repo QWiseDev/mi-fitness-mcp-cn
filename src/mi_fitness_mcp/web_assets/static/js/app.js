@@ -193,9 +193,10 @@ async function api(method, path, body = null) {
 
     if (!resp.ok) {
       showToast(`请求失败: HTTP ${resp.status}`, jsonObj?.error || jsonObj?.detail || '请查看控制台输出', 'error');
+      return null;
     }
 
-    return jsonObj;
+    return Array.isArray(jsonObj?.data) ? jsonObj.data : jsonObj;
   } catch (err) {
     const latency = Math.round(performance.now() - startTime);
     updateInspectorHeader(method, path, 'err', '网络错误', latency);
@@ -325,8 +326,8 @@ async function loadOverview() {
   if (summary && Array.isArray(summary) && summary.length > 0) {
     const latest = summary[summary.length - 1];
     $('statSteps').textContent = latest.steps ? latest.steps.toLocaleString() : '0';
-    $('statCalories').textContent = latest.active_calories ? Math.round(latest.active_calories) : '0';
-    $('statDistance').textContent = latest.distance ? (latest.distance / 1000).toFixed(2) : '0';
+    $('statCalories').textContent = Math.round(latest.active_kcal || 0);
+    $('statDistance').textContent = ((latest.distance_m || 0) / 1000).toFixed(2);
   }
 
   if (hr && Array.isArray(hr) && hr.length > 0) {
@@ -335,20 +336,22 @@ async function loadOverview() {
 
   if (sleep && Array.isArray(sleep) && sleep.length > 0) {
     const lastSleep = sleep[sleep.length - 1];
-    const totalMinutes = lastSleep.duration_minutes || (lastSleep.end_time - lastSleep.start_time) / 60;
+    const totalMinutes = lastSleep.duration_minutes;
     const hours = (totalMinutes / 60).toFixed(1);
     $('statSleep').textContent = isNaN(hours) ? '--' : hours;
   }
 
   if (spo2 && Array.isArray(spo2) && spo2.length > 0) {
-    $('statSpo2').textContent = spo2[0].spo2_value ? `${spo2[0].spo2_value}%` : '--';
+    $('statSpo2').textContent = `${spo2[0].spo2_pct}%`;
   }
 
   if (stress && Array.isArray(stress) && stress.length > 0) {
-    $('statStress').textContent = stress[0].stress_value || '--';
+    $('statStress').textContent = stress[0].stress_score ?? '--';
   }
 
-  showToast('仪表盘已刷新', '最新数据已加载', 'success');
+  if ([summary, hr, sleep, spo2, stress].every(result => result !== null)) {
+    showToast('仪表盘已刷新', '最新数据已加载', 'success');
+  }
 }
 
 // Health Data Queries
@@ -380,12 +383,12 @@ function renderSummaryVisual(data) {
   `;
 
   data.forEach(item => {
-    const distKm = item.distance ? (item.distance / 1000).toFixed(2) : '0.00';
+    const distKm = ((item.distance_m || 0) / 1000).toFixed(2);
     html += `
       <tr>
         <td><strong>${item.date || '--'}</strong></td>
         <td><span class="badge badge-success">👟 ${(item.steps || 0).toLocaleString()} 步</span></td>
-        <td>🔥 ${Math.round(item.active_calories || 0)} kcal</td>
+        <td>🔥 ${Math.round(item.active_kcal || 0)} kcal</td>
         <td>📍 ${distKm} km</td>
       </tr>
     `;
@@ -415,10 +418,11 @@ function renderSleepTimeline(data) {
   }
 
   const latest = data[data.length - 1];
-  const deep = latest.deep_sleep_minutes || 0;
-  const light = latest.light_sleep_minutes || 0;
-  const rem = latest.rem_sleep_minutes || 0;
-  const awake = latest.awake_minutes || 0;
+  const minutes = { deep: 0, light: 0, rem: 0, awake: 0 };
+  for (const stage of latest.stages || []) {
+    minutes[stage.stage] += stage.minutes;
+  }
+  const { deep, light, rem, awake } = minutes;
   const total = deep + light + rem + awake || 1;
 
   container.innerHTML = `
@@ -563,8 +567,11 @@ async function triggerSync(background = false) {
   if (background && res && res.sync_id) {
     $('syncIdInput').value = res.sync_id;
     showToast('已获取同步任务 ID', res.sync_id, 'success');
-  } else if (!background && res) {
+  } else if (!background && res?.status === 'ok') {
     showToast('前台同步完成', '健康数据已更新至本地 SQLite', 'success');
+    await loadOverview();
+  } else if (res?.status === 'partial' || res?.status === 'error') {
+    showToast('同步未全部完成', '请查看返回结果，重新同步失败的数据类型', res.status === 'partial' ? 'warning' : 'error');
   }
 }
 
