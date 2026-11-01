@@ -1,0 +1,19 @@
+[Unit]
+Description=Mi Fitness incremental synchronization
+Wants=network-online.target mi-fitness-api.service
+After=network-online.target mi-fitness-api.service
+
+[Service]
+Type=oneshot
+User=mifitness
+Group=mifitness
+WorkingDirectory=/opt/mi-fitness-mcp-cn/app
+ExecStart=/opt/mi-fitness-mcp-cn/.venv/bin/python -u /opt/mi-fitness-mcp-cn/app/deploy/sync_incremental.py
+TimeoutStartSec=30min
+UMask=0077
+StateDirectory=mi-fitness-mcp
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
