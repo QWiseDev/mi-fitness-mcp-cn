@@ -100,7 +100,16 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "metric": {
                         "type": "string",
-                        "enum": ["steps", "distance_m", "active_kcal", "weight_kg"],
+                        "enum": [
+                            "steps",
+                            "distance_m",
+                            "active_kcal",
+                            "weight_kg",
+                            "sleep_minutes",
+                            "resting_heart_rate",
+                            "spo2_pct",
+                            "stress_score",
+                        ],
                     },
                     "start_date": {"type": "string"},
                     "end_date": {"type": "string"},
@@ -232,6 +241,22 @@ async def list_tools() -> list[Tool]:
                 "properties": {"data_types": {"type": "array", "items": {"type": "string"}}},
             },
         ),
+        Tool(
+            name="get_health_report",
+            description=(
+                "Get an aggregated health report for a date range: per-day steps, calories, "
+                "sleep minutes, resting heart rate, SpO2 and stress, plus range totals and "
+                "averages. Preferred over querying raw samples when summarizing a period."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string"},
+                    "end_date": {"type": "string"},
+                },
+                "required": ["start_date", "end_date"],
+            },
+        ),
     ]
 
 
@@ -266,6 +291,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await _handle_query_abnormal_heart_beat(arguments)
         elif name == "get_data_coverage":
             result = await _handle_get_data_coverage(arguments)
+        elif name == "get_health_report":
+            result = await _handle_get_health_report(arguments)
         else:
             result = {"status": "error", "error": f"Unknown tool: {name}"}
         return [TextContent(type="text", text=json.dumps(result, default=str))]
@@ -334,9 +361,7 @@ async def _handle_get_connection_status() -> dict:
 async def _background_sync(sync_id: str, arguments: dict) -> None:
     global sync_active
     try:
-        sync_tasks[sync_id].update(
-            status="running", started_at=datetime.now(UTC).isoformat()
-        )
+        sync_tasks[sync_id].update(status="running", started_at=datetime.now(UTC).isoformat())
         sync_tasks[sync_id] = await _run_sync_data(arguments, sync_id)
     except asyncio.CancelledError:
         sync_tasks[sync_id] = {"sync_id": sync_id, "status": "cancelled"}
@@ -617,6 +642,16 @@ async def _handle_get_data_coverage(arguments: dict) -> dict:
         return {"status": "error", "error": "Query service not initialized"}
     coverage = query_service.get_data_coverage(arguments.get("data_types"))
     return QueryResponse(status="ok", source="cache", data={"coverage": coverage}).model_dump()
+
+
+async def _handle_get_health_report(arguments: dict) -> dict:
+    if not query_service:
+        return {"status": "error", "error": "Query service not initialized"}
+    report = query_service.get_health_report(
+        start_date=arguments["start_date"],
+        end_date=arguments["end_date"],
+    )
+    return QueryResponse(status="ok", source="cache", data={"report": report}).model_dump()
 
 
 async def main():

@@ -59,19 +59,9 @@ class QueryService:
         granularity: str = "day",
         aggregation: str = "sum",
     ) -> list[dict[str, Any]]:
-        """Get time series for a metric."""
-        summaries = self.get_daily_summaries(start_date, end_date)
-
-        series = []
-        for summary in summaries:
-            value = summary.get(metric)
-            if value is not None:
-                series.append(
-                    {
-                        "date": summary["date"],
-                        "value": value,
-                    }
-                )
+        """Get time series for a metric (daily rows, optional week/month aggregation)."""
+        daily = self._metric_daily_values(metric, start_date, end_date)
+        series = [{"date": day, "value": value} for day, value in sorted(daily.items())]
 
         # 按需执行周/月聚合
         if granularity == "week":
@@ -80,6 +70,132 @@ class QueryService:
             series = self._aggregate_by_month(series, aggregation)
 
         return series
+
+    def _metric_daily_values(self, metric: str, start_date: str, end_date: str) -> dict[str, Any]:
+        """Compute per-day values for a metric; returns {date: value} covering days with data.
+
+        活动类指标来自每日活动汇总；健康类指标按天从各明细表聚合：
+        - weight_kg：同日多次测量取当日最后一次
+        - sleep_minutes：当日开始（按会话 start_at 归属日期）的睡眠会话时长求和，含小睡
+        - resting_heart_rate / spo2_pct / stress_score：当日样本均值
+        """
+        if metric in (
+            "steps",
+            "distance_m",
+            "active_kcal",
+            "total_kcal",
+            "floors",
+            "active_minutes",
+        ):
+            return {
+                summary["date"]: summary[metric]
+                for summary in self.get_daily_summaries(start_date, end_date)
+                if summary.get(metric) is not None
+            }
+
+        daily: dict[str, Any] = {}
+
+        if metric == "weight_kg":
+            # 查询结果按时间升序，覆盖写入即得当日最后一次测量
+            for row in self.db.query_body_measurements(self.user_id, start_date, end_date):
+                if row.get("weight_kg") is not None:
+                    daily[str(row["timestamp"])[:10]] = row["weight_kg"]
+            return daily
+
+        if metric == "sleep_minutes":
+            for row in self.db.query_sleep_sessions(self.user_id, start_date, end_date):
+                date_key = str(row["start_at"])[:10]
+                daily[date_key] = daily.get(date_key, 0) + (row.get("duration_minutes") or 0)
+            return daily
+
+        if metric in ("resting_heart_rate", "spo2_pct", "stress_score"):
+            if metric == "resting_heart_rate":
+                rows = self.db.query_heart_rate_samples(self.user_id, start_date, end_date)
+                rows = [row for row in rows if row.get("sample_type") == "resting"]
+                value_key = "bpm"
+            elif metric == "spo2_pct":
+                rows = self.db.query_spo2_samples(self.user_id, start_date, end_date)
+                value_key = "spo2_pct"
+            else:
+                rows = self.db.query_stress_samples(self.user_id, start_date, end_date)
+                value_key = "stress_score"
+
+            buckets: dict[str, list[float]] = {}
+            for row in rows:
+                value = row.get(value_key)
+                if value is not None:
+                    buckets.setdefault(str(row["timestamp"])[:10], []).append(value)
+            return {
+                date_key: round(sum(values) / len(values), 1)
+                for date_key, values in sorted(buckets.items())
+            }
+
+        raise ValueError(
+            f"未知指标 {metric!r}，可选：steps, distance_m, active_kcal, total_kcal, "
+            "floors, active_minutes, weight_kg, sleep_minutes, resting_heart_rate, spo2_pct, stress_score"
+        )
+
+    def get_health_report(self, start_date: str, end_date: str) -> dict[str, Any]:
+        """Aggregate activity, sleep, resting HR, SpO2 and stress for a range into one report."""
+        activity_by_date = {
+            summary["date"]: summary for summary in self.get_daily_summaries(start_date, end_date)
+        }
+        sleep_daily = self._metric_daily_values("sleep_minutes", start_date, end_date)
+        rhr_daily = self._metric_daily_values("resting_heart_rate", start_date, end_date)
+        spo2_daily = self._metric_daily_values("spo2_pct", start_date, end_date)
+        stress_daily = self._metric_daily_values("stress_score", start_date, end_date)
+
+        all_days = sorted(
+            set(activity_by_date)
+            | set(sleep_daily)
+            | set(rhr_daily)
+            | set(spo2_daily)
+            | set(stress_daily)
+        )
+        days = []
+        for day in all_days:
+            activity = activity_by_date.get(day, {})
+            days.append(
+                {
+                    "date": day,
+                    "steps": activity.get("steps"),
+                    "distance_m": activity.get("distance_m"),
+                    "active_kcal": activity.get("active_kcal"),
+                    "active_minutes": activity.get("active_minutes"),
+                    "sleep_minutes": sleep_daily.get(day),
+                    "resting_heart_rate": rhr_daily.get(day),
+                    "spo2_pct": spo2_daily.get(day),
+                    "stress_score": stress_daily.get(day),
+                }
+            )
+
+        def _total(key: str) -> float:
+            return sum(day[key] or 0 for day in days)
+
+        def _avg(key: str) -> float | None:
+            values = [day[key] for day in days if day[key] is not None]
+            return round(sum(values) / len(values), 1) if values else None
+
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "days_with_data": len(days),
+            "totals": {
+                "steps": _total("steps"),
+                "distance_m": _total("distance_m"),
+                "active_kcal": _total("active_kcal"),
+                "active_minutes": _total("active_minutes"),
+                "sleep_minutes": _total("sleep_minutes"),
+            },
+            "averages": {
+                "steps": _avg("steps"),
+                "sleep_minutes": _avg("sleep_minutes"),
+                "resting_heart_rate": _avg("resting_heart_rate"),
+                "spo2_pct": _avg("spo2_pct"),
+                "stress_score": _avg("stress_score"),
+            },
+            "days": days,
+        }
 
     def _aggregate_by_week(
         self,

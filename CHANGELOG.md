@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 新增：`query_metric_series` 支持健康指标序列——`weight_kg`（当日最后一次测量，此前枚举存在但永远返回空）、`sleep_minutes`（按会话开始日期求和）、`resting_heart_rate` / `spo2_pct` / `stress_score`（当日均值），周/月聚合照常可用；REST `/api/metric-series` 同步扩展
+- 新增：`get_health_report`（MCP 工具 + REST `/api/health-report`）：一次调用返回日期范围内逐日步数/卡路里/睡眠/静息心率/血氧/压力及区间合计与均值，替代 agent 多次查询拼接
 - 修复：网页仪表盘读取 REST 实际字段（`active_kcal`、`distance_m`、`spo2_pct`、`stress_score`、睡眠 `stages[]`）并解包 `data` 信封；概览卡片取窗口内最新样本；血氧缺失时显示 `--`；HTTP 错误不再向调用方返回看似成功的载荷；同步部分完成/失败时如实提示
 - 修复：Web 代理仅在浏览器未提供 `X-API-Key` 时附加服务器静态 Key，避免覆盖扫码登录账号的账号 Key
 - 新增：`deploy/` 服务器部署脚本（systemd 单元、每小时增量同步、全历史一次性回填、只读 keyring 后端）；全历史脚本等待忙碌 API 重试加上限，避免无人值守时卡死

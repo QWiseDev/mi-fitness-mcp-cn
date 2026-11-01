@@ -60,7 +60,16 @@ DATA_TYPES = [
     "abnormal_heart_beat",
 ]
 
-METRICS = ["steps", "distance_m", "active_kcal"]
+METRICS = [
+    "steps",
+    "distance_m",
+    "active_kcal",
+    "weight_kg",
+    "sleep_minutes",
+    "resting_heart_rate",
+    "spo2_pct",
+    "stress_score",
+]
 GRANULARITIES = ["day", "week", "month"]
 AGGREGATIONS = ["sum", "avg", "min", "max", "latest"]
 STRESS_LEVELS = ["low", "medium", "high"]
@@ -94,9 +103,7 @@ def _build_context(db: Database, config, user_id: str, pass_token: str, region: 
         pass_token=pass_token,
         region=region,
         adapter=adapter,
-        sync_service=SyncService(
-            adapter, db, config.default_lookback_days, config.sync_chunk_days
-        ),
+        sync_service=SyncService(adapter, db, config.default_lookback_days, config.sync_chunk_days),
         query_service=QueryService(db, user_id),
     )
 
@@ -175,9 +182,7 @@ async def _gate(x_api_key: str | None = Header(default=None)) -> None:
         return
     db: Database = app.state.db
     with db._get_connection() as conn:
-        row = conn.execute(
-            "SELECT revoked FROM api_keys WHERE key = ?", (x_api_key,)
-        ).fetchone()
+        row = conn.execute("SELECT revoked FROM api_keys WHERE key = ?", (x_api_key,)).fetchone()
     if row is None or row["revoked"]:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
@@ -309,14 +314,23 @@ class CreateKeyRequest(BaseModel):
     label: str | None = None
 
 
-def _create_key_record(db: Database, user_id: str, pass_token: str, region: str, label: str | None) -> str:
+def _create_key_record(
+    db: Database, user_id: str, pass_token: str, region: str, label: str | None
+) -> str:
     key = "mif_sk_" + secrets.token_hex(20)
     # passToken 存系统 keyring（加密）；keyring 不可用才降级写 DB 明文列
     stored = store_api_key_secret(key, pass_token)
     with db._get_connection() as conn:
         conn.execute(
             "INSERT INTO api_keys (key, label, user_id, pass_token, region, created_at) VALUES (?,?,?,?,?,?)",
-            (key, label, user_id, "" if stored else pass_token, region, datetime.now(UTC).isoformat()),
+            (
+                key,
+                label,
+                user_id,
+                "" if stored else pass_token,
+                region,
+                datetime.now(UTC).isoformat(),
+            ),
         )
         conn.commit()
     return key
@@ -340,7 +354,9 @@ async def create_key(body: CreateKeyRequest, request: Request) -> dict:
             status_code=400,
             detail=f"凭据验证失败：{error or 'cannot login'}",
         )
-    key = _create_key_record(state.db, body.user_id, body.pass_token, body.region or "cn", body.label)
+    key = _create_key_record(
+        state.db, body.user_id, body.pass_token, body.region or "cn", body.label
+    )
     return {
         "api_key": key,
         "user_id": body.user_id,
@@ -381,7 +397,9 @@ async def revoke_key(key_prefix: str, request: Request) -> dict:
     db: Database = request.app.state.db
     with db._get_connection() as conn:
         rows = conn.execute("SELECT key FROM api_keys").fetchall()
-        matches = [r["key"] for r in rows if r["key"] == key_prefix or r["key"].startswith(key_prefix)]
+        matches = [
+            r["key"] for r in rows if r["key"] == key_prefix or r["key"].startswith(key_prefix)
+        ]
         if not matches:
             raise HTTPException(status_code=404, detail="没有匹配的 Key（可用完整 Key 或唯一前缀）")
         for k in matches:
@@ -466,7 +484,11 @@ async def qr_poll(token: str, request: Request) -> dict:
     if sess is None:
         raise HTTPException(status_code=404, detail="Unknown qr_token")
     if sess["status"] == "confirmed":
-        return {"status": "confirmed", "api_key": sess.get("api_key"), "user_id": sess.get("user_id")}
+        return {
+            "status": "confirmed",
+            "api_key": sess.get("api_key"),
+            "user_id": sess.get("user_id"),
+        }
     if time.time() - sess["created_at"] > sess["expires_in"] + 10:
         sess["status"] = "expired"
         return {"status": "expired"}
@@ -571,9 +593,7 @@ async def _run_sync(ctx: UserContext, config, arguments: dict) -> dict:
     data_types = arguments.get("data_types") or sorted(supported)
     unknown = sorted(set(data_types) - supported)
     if unknown:
-        raise HTTPException(
-            status_code=400, detail=f"Unsupported data types: {', '.join(unknown)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Unsupported data types: {', '.join(unknown)}")
     started_at = datetime.now(UTC)
     totals = {"added": 0, "updated": 0, "skipped": 0}
     details = []
@@ -667,11 +687,17 @@ async def post_sync(req: SyncRequest, request: Request) -> dict:
         ctx.sync_running = True
         sync_id = str(uuid.uuid4())
         task = asyncio.create_task(_background_sync(request.app, sync_id, ctx, arguments))
-        request.app.state.sync_tasks[sync_id] = {"sync_id": sync_id, "status": "queued", "task": task}
+        request.app.state.sync_tasks[sync_id] = {
+            "sync_id": sync_id,
+            "status": "queued",
+            "task": task,
+        }
         return {"status": "accepted", "sync_id": sync_id}
     ctx.sync_running = True
     try:
-        return await _run_sync(ctx, request.app.state.config, {**arguments, "sync_id": str(uuid.uuid4())})
+        return await _run_sync(
+            ctx, request.app.state.config, {**arguments, "sync_id": str(uuid.uuid4())}
+        )
     finally:
         ctx.sync_running = False
 
@@ -735,9 +761,7 @@ def get_heart_rate(
 
 
 @app.get("/api/sleep")
-def get_sleep(
-    request: Request, start_date: str, end_date: str, include_naps: bool = True
-) -> dict:
+def get_sleep(request: Request, start_date: str, end_date: str, include_naps: bool = True) -> dict:
     data = _query_service(request).get_sleep_sessions(
         start_date=_validate_date(start_date, "start_date"),
         end_date=_validate_date(end_date, "end_date"),
@@ -795,7 +819,11 @@ def get_spo2(request: Request, start_date: str, end_date: str, limit: int | None
 
 @app.get("/api/stress")
 def get_stress(
-    request: Request, start_date: str, end_date: str, level: str | None = None, limit: int | None = None
+    request: Request,
+    start_date: str,
+    end_date: str,
+    level: str | None = None,
+    limit: int | None = None,
 ) -> dict:
     if level and level not in STRESS_LEVELS:
         raise HTTPException(status_code=400, detail=f"level 必须是 {STRESS_LEVELS} 之一")
@@ -821,11 +849,18 @@ def get_abnormal_heart_beat(
 
 
 @app.get("/api/coverage")
-def get_coverage(
-    request: Request, data_types: Annotated[list[str] | None, Query()] = None
-) -> dict:
+def get_coverage(request: Request, data_types: Annotated[list[str] | None, Query()] = None) -> dict:
     data = _query_service(request).get_data_coverage(data_types)
     return {"status": "ok", "count": len(data), "data": data}
+
+
+@app.get("/api/health-report")
+def get_health_report(request: Request, start_date: str, end_date: str) -> dict:
+    report = _query_service(request).get_health_report(
+        start_date=_validate_date(start_date, "start_date"),
+        end_date=_validate_date(end_date, "end_date"),
+    )
+    return {"status": "ok", **report}
 
 
 def _to_csv(rows: list[dict[str, Any]]) -> str:
@@ -873,7 +908,9 @@ def export_data(
 ) -> Response | dict:
     """导出本地数据（JSON 或 CSV）。仅读本地 SQLite，不触发任何网络请求。"""
     if data_type not in EXPORT_SOURCES:
-        raise HTTPException(status_code=400, detail=f"data_type 必须是 {sorted(EXPORT_SOURCES)} 之一")
+        raise HTTPException(
+            status_code=400, detail=f"data_type 必须是 {sorted(EXPORT_SOURCES)} 之一"
+        )
     if format not in ("json", "csv"):
         raise HTTPException(status_code=400, detail="format 必须是 json 或 csv")
     data = EXPORT_SOURCES[data_type](
