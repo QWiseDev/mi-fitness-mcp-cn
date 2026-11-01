@@ -17,6 +17,7 @@ from mi_fitness_mcp.config import load_config
 from mi_fitness_mcp.models import ConnectionStatus, QueryResponse
 from mi_fitness_mcp.services.query_service import QueryService
 from mi_fitness_mcp.services.sync_service import SyncService
+from mi_fitness_mcp.services.workout_detail import get_workout_detail as _workout_detail
 from mi_fitness_mcp.storage import Database
 
 logger = logging.getLogger(__name__)
@@ -100,7 +101,16 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "metric": {
                         "type": "string",
-                        "enum": ["steps", "distance_m", "active_kcal", "weight_kg"],
+                        "enum": [
+                            "steps",
+                            "distance_m",
+                            "active_kcal",
+                            "weight_kg",
+                            "sleep_minutes",
+                            "resting_heart_rate",
+                            "spo2_pct",
+                            "stress_score",
+                        ],
                     },
                     "start_date": {"type": "string"},
                     "end_date": {"type": "string"},
@@ -232,6 +242,35 @@ async def list_tools() -> list[Tool]:
                 "properties": {"data_types": {"type": "array", "items": {"type": "string"}}},
             },
         ),
+        Tool(
+            name="get_health_report",
+            description=(
+                "Get an aggregated health report for a date range: per-day steps, calories, "
+                "sleep minutes, resting heart rate, SpO2 and stress, plus range totals and "
+                "averages. Preferred over querying raw samples when summarizing a period."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string"},
+                    "end_date": {"type": "string"},
+                },
+                "required": ["start_date", "end_date"],
+            },
+        ),
+        Tool(
+            name="get_workout_detail",
+            description=(
+                "Get detail for one workout by its workout_id (from query_workouts): the "
+                "cloud-embedded summary (training effect, heart-rate zones, training load, "
+                "recovery time) merged with the workout-window heart rate samples."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {"workout_id": {"type": "string"}},
+                "required": ["workout_id"],
+            },
+        ),
     ]
 
 
@@ -266,6 +305,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await _handle_query_abnormal_heart_beat(arguments)
         elif name == "get_data_coverage":
             result = await _handle_get_data_coverage(arguments)
+        elif name == "get_health_report":
+            result = await _handle_get_health_report(arguments)
+        elif name == "get_workout_detail":
+            result = await _handle_get_workout_detail(arguments)
         else:
             result = {"status": "error", "error": f"Unknown tool: {name}"}
         return [TextContent(type="text", text=json.dumps(result, default=str))]
@@ -334,9 +377,7 @@ async def _handle_get_connection_status() -> dict:
 async def _background_sync(sync_id: str, arguments: dict) -> None:
     global sync_active
     try:
-        sync_tasks[sync_id].update(
-            status="running", started_at=datetime.now(UTC).isoformat()
-        )
+        sync_tasks[sync_id].update(status="running", started_at=datetime.now(UTC).isoformat())
         sync_tasks[sync_id] = await _run_sync_data(arguments, sync_id)
     except asyncio.CancelledError:
         sync_tasks[sync_id] = {"sync_id": sync_id, "status": "cancelled"}
@@ -617,6 +658,36 @@ async def _handle_get_data_coverage(arguments: dict) -> dict:
         return {"status": "error", "error": "Query service not initialized"}
     coverage = query_service.get_data_coverage(arguments.get("data_types"))
     return QueryResponse(status="ok", source="cache", data={"coverage": coverage}).model_dump()
+
+
+async def _handle_get_health_report(arguments: dict) -> dict:
+    if not query_service:
+        return {"status": "error", "error": "Query service not initialized"}
+    report = query_service.get_health_report(
+        start_date=arguments["start_date"],
+        end_date=arguments["end_date"],
+    )
+    return QueryResponse(status="ok", source="cache", data={"report": report}).model_dump()
+
+
+async def _handle_get_workout_detail(arguments: dict) -> dict:
+    if not query_service:
+        return {"status": "error", "error": "Query service not initialized"}
+    if not adapter:
+        return {"status": "error", "error": "Adapter not initialized"}
+    if not adapter.is_connected():
+        # 适配器按需连接（与同步流程一致）；失败时降级为仅本地数据
+        try:
+            connected = await adapter.connect()
+        except Exception:
+            connected = False
+        if not connected:
+            logger.warning("get_workout_detail: cloud connect failed, returning local-only detail")
+    try:
+        detail = await _workout_detail(adapter, db, query_service.user_id, arguments["workout_id"])
+    except ValueError as exc:
+        return {"status": "error", "error": str(exc)}
+    return QueryResponse(status="ok", source="mi_fitness_cloud", data={"detail": detail}).model_dump()
 
 
 async def main():

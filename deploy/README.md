@@ -7,7 +7,7 @@
 本地部署补丁：
 
 - Web 代理只在浏览器未提供 `X-API-Key` 时附加服务器静态 Key，避免覆盖扫码登录得到的账号 Key。对应回归用例为 `test_proxy_preserves_client_api_key`。
-- 网页从 REST 响应的 `data` 数组读取记录，使用实际的距离、卡路里、血氧、压力和睡眠分期字段；同步失败或部分完成时不再提示全部成功。前端回归命令为 `node --test tests/test_dashboard.mjs`，不需要安装 npm 依赖。
+- 网页从 REST 响应的 `data` 数组读取记录，使用实际的距离、卡路里、血氧、压力和睡眠分期字段；概览卡片读取时间窗口内最新一条样本（查询结果为升序，不能用 `limit=1` 取最新）；同步失败或部分完成时不再提示全部成功。前端回归命令为 `node --test tests/test_dashboard.mjs`，不需要安装 npm 依赖。
 
 ## 服务器位置
 

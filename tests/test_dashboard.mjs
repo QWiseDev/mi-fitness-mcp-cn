@@ -39,18 +39,30 @@ test('data endpoints expose rows while the inspector retains the response envelo
   assert.equal(vm.runInContext('state.lastResponse.count', context), 1);
 });
 
-test('overview uses backend field names and preserves a zero stress score', async () => {
+test('overview uses backend field names, shows the latest samples and preserves a zero stress score', async () => {
   const { context, elements } = dashboard({
-    '/api/summary': { data: [{ steps: 1234, active_kcal: 345, distance_m: 2500 }] },
-    '/api/heart-rate': { data: [{ bpm: 65 }] },
+    '/api/summary': { data: [{ steps: 1 }, { steps: 1234, active_kcal: 345, distance_m: 2500 }] },
+    '/api/heart-rate': { data: [{ bpm: 70 }, { bpm: 65 }] },
     '/api/sleep': { data: [{ duration_minutes: 420 }] },
-    '/api/spo2': { data: [{ spo2_pct: 98 }] },
-    '/api/stress': { data: [{ stress_score: 0 }] },
+    '/api/spo2': { data: [{ spo2_pct: 97 }, { spo2_pct: 98 }] },
+    '/api/stress': { data: [{ stress_score: 30 }, { stress_score: 0 }] },
   });
   await context.loadOverview();
   for (const [id, expected] of Object.entries({ statSteps: '1,234', statCalories: '345', statDistance: '2.50', statHr: '65', statSleep: '7.0', statSpo2: '98%', statStress: '0' })) {
     assert.equal(String(elements.get(id).textContent), expected, id);
   }
+});
+
+test('spo2 card falls back when the field is missing', async () => {
+  const { context, elements } = dashboard({
+    '/api/summary': { data: [{ steps: 1 }] },
+    '/api/heart-rate': { data: [{ bpm: 65 }] },
+    '/api/sleep': { data: [{ duration_minutes: 420 }] },
+    '/api/spo2': { data: [{ timestamp: '2026-10-17T08:00:00+08:00' }] },
+    '/api/stress': { data: [{ stress_score: 5 }] },
+  });
+  await context.loadOverview();
+  assert.equal(elements.get('statSpo2').textContent, '--');
 });
 
 test('daily activity table renders the API response and units', async () => {

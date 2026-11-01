@@ -661,6 +661,15 @@ class Database:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def get_workout_by_id(self, user_id: str, workout_id: str) -> dict[str, Any] | None:
+        """Fetch a single workout row by its composite workout ID."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM workouts WHERE user_id = ? AND workout_id = ?",
+                (user_id, workout_id),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
     def query_body_measurements(
         self,
         user_id: str,

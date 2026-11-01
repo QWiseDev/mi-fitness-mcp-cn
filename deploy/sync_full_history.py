@@ -129,11 +129,18 @@ async def main():
             state["current"] = {"index": index + 1, **job}
             save(state)
             attempts = 0
+            busy_polls = 0
             while attempts < 3:
                 try:
                     response = await client.post("/api/sync", json={"data_types": [job["data_type"]], "start_date": job["start_date"], "end_date": job["end_date"], "force_full_sync": True})
                     if response.status_code == 409:
-                        await asyncio.sleep(3)
+                        # API 忙碌时等待重试；有上限，避免无人值守时长轮询卡死整个任务。
+                        busy_polls += 1
+                        if busy_polls >= 20:
+                            job["status"] = "error"
+                            job["error"] = "API busy (409)"
+                            break
+                        await asyncio.sleep(30)
                         continue
                     response.raise_for_status()
                     result = response.json()
