@@ -673,13 +673,21 @@ async def _handle_get_health_report(arguments: dict) -> dict:
 async def _handle_get_workout_detail(arguments: dict) -> dict:
     if not query_service:
         return {"status": "error", "error": "Query service not initialized"}
-    if not adapter or not adapter.is_connected():
-        return {"status": "error", "error": "Not connected to data source"}
+    if not adapter:
+        return {"status": "error", "error": "Adapter not initialized"}
+    if not adapter.is_connected():
+        # 适配器按需连接（与同步流程一致）；失败时降级为仅本地数据
+        try:
+            connected = await adapter.connect()
+        except Exception:
+            connected = False
+        if not connected:
+            logger.warning("get_workout_detail: cloud connect failed, returning local-only detail")
     try:
         detail = await _workout_detail(adapter, db, query_service.user_id, arguments["workout_id"])
     except ValueError as exc:
         return {"status": "error", "error": str(exc)}
-    return QueryResponse(status="ok", source="cloud", data={"detail": detail}).model_dump()
+    return QueryResponse(status="ok", source="mi_fitness_cloud", data={"detail": detail}).model_dump()
 
 
 async def main():

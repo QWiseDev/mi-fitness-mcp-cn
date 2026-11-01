@@ -794,8 +794,16 @@ def get_workouts(
 async def get_workout_detail(request: Request, workout_id: str) -> dict:
     """单条运动详情：云端 value 摘要（训练效果/心率区间/负荷）+ 本地心率曲线。"""
     ctx = _resolve_context(request)
-    if ctx.adapter is None or not ctx.adapter.is_connected():
+    if ctx.adapter is None:
         raise HTTPException(status_code=503, detail="Cloud adapter unavailable")
+    if not ctx.adapter.is_connected():
+        # 适配器按需连接（与同步流程一致）；失败时降级为仅本地数据
+        try:
+            connected = await ctx.adapter.connect()
+        except Exception:
+            connected = False
+        if not connected:
+            raise HTTPException(status_code=503, detail="Cloud connect failed")
     try:
         detail = await _workout_detail(ctx.adapter, request.app.state.db, ctx.user_id, workout_id)
     except ValueError as exc:
