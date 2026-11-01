@@ -126,9 +126,9 @@ def create_app(
             if k_lower not in ("host", "content-length", "transfer-encoding"):
                 forward_headers[key] = value
 
-        # Attach API Key (Server env priority, otherwise pass through client key)
+        # Use the server key only when the browser has not supplied an account key.
         server_api_key = app.config["API_KEY"]
-        if server_api_key:
+        if server_api_key and not request.headers.get("X-API-Key"):
             forward_headers["X-API-Key"] = server_api_key
 
         # Attach Admin Key if configured
