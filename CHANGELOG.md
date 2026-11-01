@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- 修复：网页仪表盘读取 REST 实际字段（`active_kcal`、`distance_m`、`spo2_pct`、`stress_score`、睡眠 `stages[]`）并解包 `data` 信封；概览卡片取窗口内最新样本；血氧缺失时显示 `--`；HTTP 错误不再向调用方返回看似成功的载荷；同步部分完成/失败时如实提示
+- 修复：Web 代理仅在浏览器未提供 `X-API-Key` 时附加服务器静态 Key，避免覆盖扫码登录账号的账号 Key
+- 新增：`deploy/` 服务器部署脚本（systemd 单元、每小时增量同步、全历史一次性回填、只读 keyring 后端）；全历史脚本等待忙碌 API 重试加上限，避免无人值守时卡死
+
 ## 0.2.2（零第三方请求）
 
 - 移除 Web 仪表盘与测试页的 Google Fonts 外链：打开页面不再向 Google 发送任何请求（此前浏览器会上传 IP/UA），改用系统字体栈，国内加载也更快、离线可渲染

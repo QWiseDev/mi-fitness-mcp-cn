@@ -314,10 +314,11 @@ function downloadJson() {
 async function loadOverview() {
   showToast('正在加载仪表盘概览…', '', 'info', 1500);
   const summaryPromise = api('GET', getRangeQuery('/api/summary'));
-  const hrPromise = api('GET', getRangeQuery('/api/heart-rate') + '&sample_type=resting&limit=1');
+  // 查询结果按时间升序，取末尾元素即为窗口内最新样本；不能用 limit=1（那会取到最早一条）。
+  const hrPromise = api('GET', getRangeQuery('/api/heart-rate') + '&sample_type=resting');
   const sleepPromise = api('GET', getRangeQuery('/api/sleep') + '&include_naps=true');
-  const spo2Promise = api('GET', getRangeQuery('/api/spo2') + '&limit=1');
-  const stressPromise = api('GET', getRangeQuery('/api/stress') + '&limit=1');
+  const spo2Promise = api('GET', getRangeQuery('/api/spo2'));
+  const stressPromise = api('GET', getRangeQuery('/api/stress'));
 
   const [summary, hr, sleep, spo2, stress] = await Promise.all([
     summaryPromise, hrPromise, sleepPromise, spo2Promise, stressPromise
@@ -331,7 +332,7 @@ async function loadOverview() {
   }
 
   if (hr && Array.isArray(hr) && hr.length > 0) {
-    $('statHr').textContent = hr[0].bpm || '--';
+    $('statHr').textContent = hr[hr.length - 1].bpm || '--';
   }
 
   if (sleep && Array.isArray(sleep) && sleep.length > 0) {
@@ -342,11 +343,12 @@ async function loadOverview() {
   }
 
   if (spo2 && Array.isArray(spo2) && spo2.length > 0) {
-    $('statSpo2').textContent = `${spo2[0].spo2_pct}%`;
+    const latestSpo2 = spo2[spo2.length - 1].spo2_pct;
+    $('statSpo2').textContent = latestSpo2 != null ? `${latestSpo2}%` : '--';
   }
 
   if (stress && Array.isArray(stress) && stress.length > 0) {
-    $('statStress').textContent = stress[0].stress_score ?? '--';
+    $('statStress').textContent = stress[stress.length - 1].stress_score ?? '--';
   }
 
   if ([summary, hr, sleep, spo2, stress].every(result => result !== null)) {
