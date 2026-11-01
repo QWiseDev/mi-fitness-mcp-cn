@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly Mi Fitness incremental synchronization
+
+[Timer]
+OnCalendar=*-*-* *:00:00 Asia/Shanghai
+Persistent=true
+AccuracySec=1min
+Unit=mi-fitness-sync.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,2 @@
+# 仅服务器部署使用；应用依赖由 pyproject.toml 管理。
+gunicorn>=23,<24

@@ -1,0 +1,25 @@
+[Unit]
+Description=Mi Fitness REST API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=mifitness
+Group=mifitness
+WorkingDirectory=/opt/mi-fitness-mcp-cn/app
+EnvironmentFile=/etc/mi-fitness-mcp/runtime.env
+ExecStart=/opt/mi-fitness-mcp-cn/.venv/bin/mi-fitness-mcp api --host 127.0.0.1 --port 8321
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+StateDirectory=mi-fitness-mcp
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
