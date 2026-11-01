@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 新增：`get_workout_detail`（MCP 工具 + REST `/api/workouts/{workout_id}/detail`）：云端运动记录内嵌的 `value` 摘要（训练效果、心率区间时长、训练负荷、恢复时间等 App 详情页数据）+ 本地运动窗口内心率样本曲线；适配器离线或云端无该记录时仍返回本地数据。GPS 轨迹/分段需未公开的云端详情接口，暂不包含
 - 新增：`query_metric_series` 支持健康指标序列——`weight_kg`（当日最后一次测量，此前枚举存在但永远返回空）、`sleep_minutes`（按会话开始日期求和）、`resting_heart_rate` / `spo2_pct` / `stress_score`（当日均值），周/月聚合照常可用；REST `/api/metric-series` 同步扩展
 - 新增：`get_health_report`（MCP 工具 + REST `/api/health-report`）：一次调用返回日期范围内逐日步数/卡路里/睡眠/静息心率/血氧/压力及区间合计与均值，替代 agent 多次查询拼接
 - 修复：网页仪表盘读取 REST 实际字段（`active_kcal`、`distance_m`、`spo2_pct`、`stress_score`、睡眠 `stages[]`）并解包 `data` 信封；概览卡片取窗口内最新样本；血氧缺失时显示 `--`；HTTP 错误不再向调用方返回看似成功的载荷；同步部分完成/失败时如实提示

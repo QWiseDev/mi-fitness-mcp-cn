@@ -17,6 +17,7 @@ from mi_fitness_mcp.config import load_config
 from mi_fitness_mcp.models import ConnectionStatus, QueryResponse
 from mi_fitness_mcp.services.query_service import QueryService
 from mi_fitness_mcp.services.sync_service import SyncService
+from mi_fitness_mcp.services.workout_detail import get_workout_detail as _workout_detail
 from mi_fitness_mcp.storage import Database
 
 logger = logging.getLogger(__name__)
@@ -257,6 +258,19 @@ async def list_tools() -> list[Tool]:
                 "required": ["start_date", "end_date"],
             },
         ),
+        Tool(
+            name="get_workout_detail",
+            description=(
+                "Get detail for one workout by its workout_id (from query_workouts): the "
+                "cloud-embedded summary (training effect, heart-rate zones, training load, "
+                "recovery time) merged with the workout-window heart rate samples."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {"workout_id": {"type": "string"}},
+                "required": ["workout_id"],
+            },
+        ),
     ]
 
 
@@ -293,6 +307,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await _handle_get_data_coverage(arguments)
         elif name == "get_health_report":
             result = await _handle_get_health_report(arguments)
+        elif name == "get_workout_detail":
+            result = await _handle_get_workout_detail(arguments)
         else:
             result = {"status": "error", "error": f"Unknown tool: {name}"}
         return [TextContent(type="text", text=json.dumps(result, default=str))]
@@ -652,6 +668,18 @@ async def _handle_get_health_report(arguments: dict) -> dict:
         end_date=arguments["end_date"],
     )
     return QueryResponse(status="ok", source="cache", data={"report": report}).model_dump()
+
+
+async def _handle_get_workout_detail(arguments: dict) -> dict:
+    if not query_service:
+        return {"status": "error", "error": "Query service not initialized"}
+    if not adapter or not adapter.is_connected():
+        return {"status": "error", "error": "Not connected to data source"}
+    try:
+        detail = await _workout_detail(adapter, db, query_service.user_id, arguments["workout_id"])
+    except ValueError as exc:
+        return {"status": "error", "error": str(exc)}
+    return QueryResponse(status="ok", source="cloud", data={"detail": detail}).model_dump()
 
 
 async def main():

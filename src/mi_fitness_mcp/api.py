@@ -47,6 +47,7 @@ from mi_fitness_mcp.security import (
 )
 from mi_fitness_mcp.services.query_service import QueryService
 from mi_fitness_mcp.services.sync_service import SyncService
+from mi_fitness_mcp.services.workout_detail import get_workout_detail as _workout_detail
 from mi_fitness_mcp.storage import Database
 
 DATA_TYPES = [
@@ -787,6 +788,19 @@ def get_workouts(
         min_distance_km=min_distance_km,
     )
     return {"status": "ok", "count": len(data), "data": data}
+
+
+@app.get("/api/workouts/{workout_id}/detail")
+async def get_workout_detail(request: Request, workout_id: str) -> dict:
+    """单条运动详情：云端 value 摘要（训练效果/心率区间/负荷）+ 本地心率曲线。"""
+    ctx = _resolve_context(request)
+    if ctx.adapter is None or not ctx.adapter.is_connected():
+        raise HTTPException(status_code=503, detail="Cloud adapter unavailable")
+    try:
+        detail = await _workout_detail(ctx.adapter, request.app.state.db, ctx.user_id, workout_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    return {"status": "ok", "data": detail}
 
 
 @app.get("/api/body-measurements")
