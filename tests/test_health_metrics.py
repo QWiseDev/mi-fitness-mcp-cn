@@ -240,3 +240,37 @@ def test_health_report_totals_and_averages(tmp_path):
     )
     day17 = report["days"][1]
     assert day17["steps"] == 7000 and day17["sleep_minutes"] is None and day17["spo2_pct"] is None
+
+
+def test_vitality_roundtrip_and_report(tmp_path):
+    from mi_fitness_mcp.models import VitalityRecord
+
+    db = Database(tmp_path / "test.db")
+    service = QueryService(db, USER)
+    for day, acc in (("2026-10-16", 37), ("2026-10-17", 31)):
+        db.insert_vitality_record(
+            VitalityRecord(
+                id=f"v-{day}",
+                provider="mi_fitness",
+                source_type="cloud_session",
+                user_id=USER,
+                date=day,
+                accumulated_vitality=acc,
+                high_intensity_vitality=0,
+                medium_intensity_vitality=2,
+                low_intensity_vitality=1,
+                suggested_activity_duration_minutes=21,
+                suggested_activity_type=1,
+            )
+        )
+
+    rows = service.get_vitality_records("2026-10-01", "2026-10-31")
+    assert len(rows) == 2
+    assert rows[0]["accumulated_vitality"] == 37
+    assert rows[0]["medium_intensity_vitality"] == 2
+
+    insert_activity(db, "2026-10-16", 5000)
+    report = service.get_health_report("2026-10-16", "2026-10-17")
+    assert report["totals"]["vitality"] == 68
+    assert report["averages"]["vitality"] == 34.0
+    assert report["days"][0]["vitality"] == 37

@@ -140,6 +140,10 @@ class QueryService:
         activity_by_date = {
             summary["date"]: summary for summary in self.get_daily_summaries(start_date, end_date)
         }
+        vitality_daily = {
+            row["date"]: row["accumulated_vitality"]
+            for row in self.db.query_vitality_records(self.user_id, start_date, end_date)
+        }
         sleep_daily = self._metric_daily_values("sleep_minutes", start_date, end_date)
         rhr_daily = self._metric_daily_values("resting_heart_rate", start_date, end_date)
         spo2_daily = self._metric_daily_values("spo2_pct", start_date, end_date)
@@ -147,6 +151,7 @@ class QueryService:
 
         all_days = sorted(
             set(activity_by_date)
+            | set(vitality_daily)
             | set(sleep_daily)
             | set(rhr_daily)
             | set(spo2_daily)
@@ -162,6 +167,7 @@ class QueryService:
                     "distance_m": activity.get("distance_m"),
                     "active_kcal": activity.get("active_kcal"),
                     "active_minutes": activity.get("active_minutes"),
+                    "vitality": vitality_daily.get(day),
                     "sleep_minutes": sleep_daily.get(day),
                     "resting_heart_rate": rhr_daily.get(day),
                     "spo2_pct": spo2_daily.get(day),
@@ -186,6 +192,7 @@ class QueryService:
                 "active_kcal": _total("active_kcal"),
                 "active_minutes": _total("active_minutes"),
                 "sleep_minutes": _total("sleep_minutes"),
+                "vitality": _total("vitality"),
             },
             "averages": {
                 "steps": _avg("steps"),
@@ -193,6 +200,7 @@ class QueryService:
                 "resting_heart_rate": _avg("resting_heart_rate"),
                 "spo2_pct": _avg("spo2_pct"),
                 "stress_score": _avg("stress_score"),
+                "vitality": _avg("vitality"),
             },
             "days": days,
         }
@@ -735,6 +743,26 @@ class QueryService:
             for record in records
         ]
         return events[:limit] if limit is not None else events
+
+    def get_vitality_records(
+        self,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        """Query daily vitality records (活力值) for date range."""
+        rows = self.db.query_vitality_records(self.user_id, start_date, end_date)
+        return [
+            {
+                "date": row["date"],
+                "accumulated_vitality": row["accumulated_vitality"],
+                "high_intensity_vitality": row["high_intensity_vitality"],
+                "medium_intensity_vitality": row["medium_intensity_vitality"],
+                "low_intensity_vitality": row["low_intensity_vitality"],
+                "suggested_activity_duration_minutes": row["suggested_activity_duration"],
+                "suggested_activity_type": row["suggested_activity_type"],
+            }
+            for row in rows
+        ]
 
     def get_data_coverage(self, data_types: list[str] | None = None) -> list[dict[str, Any]]:
         """Get data coverage information."""

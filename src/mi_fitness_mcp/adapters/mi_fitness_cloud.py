@@ -24,6 +24,7 @@ from mi_fitness_mcp.models import (
     SleepStage,
     SpO2Sample,
     StressSample,
+    VitalityRecord,
     Workout,
 )
 
@@ -354,6 +355,7 @@ class MiFitnessCloudAdapter(DataAdapter):
             "spo2",
             "stress",
             "abnormal_heart_beat",
+            "vitality",
         ]
 
     def _record_datetime(self, item: dict) -> datetime:
@@ -716,6 +718,48 @@ class MiFitnessCloudAdapter(DataAdapter):
                 return {"sport_records": records, "watermark": next_watermark, "has_more": False}
             cursor = next_watermark
         raise RuntimeError("Mi Fitness sport watermark pagination exceeded safety limit")
+
+    async def iter_vitality(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> AsyncIterator[VitalityRecord]:
+        """每日活力值（key=vitality，与 steps/sleep 等同一 fitness 数据管线）。"""
+        if not self.is_connected() or not start_date or not end_date:
+            return
+            yield
+
+        records = await self._fetch_key("vitality", start_date, end_date)
+        for item in records:
+            payload = self._parse_value(item)
+            date_time = payload.get("date_time") or item.get("time")
+            if not date_time:
+                continue
+            day = (
+                self._timestamp_to_datetime(date_time, int(item.get("zone_offset", 0) or 0))
+                .date()
+                .isoformat()
+            )
+            yield VitalityRecord(
+                id=f"mi_fitness_vitality_{day}_{item.get('sid', self.user_id)}",
+                provider="mi_fitness",
+                source_type="cloud_session",
+                source_record_id=str(item.get("time", "")) or None,
+                user_id=self.user_id or "unknown",
+                timezone=item.get("zone_name") or "UTC",
+                collected_at=self._record_datetime(item),
+                date=day,
+                accumulated_vitality=int(payload.get("latest_accumulated_vitality", 0) or 0),
+                high_intensity_vitality=int(payload.get("daily_high_intensity_vitality", 0) or 0),
+                medium_intensity_vitality=int(
+                    payload.get("daily_medium_intensity_vitality", 0) or 0
+                ),
+                low_intensity_vitality=int(payload.get("daily_low_intensity_vitality", 0) or 0),
+                suggested_activity_duration_minutes=self._optional_int(
+                    payload.get("suggested_activity_duration")
+                ),
+                suggested_activity_type=self._optional_int(payload.get("suggested_activity_type")),
+            )
 
     async def iter_body_measurements(
         self,

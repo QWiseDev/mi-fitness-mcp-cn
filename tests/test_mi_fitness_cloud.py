@@ -228,3 +228,40 @@ async def test_iter_sleep_sessions_merges_overlapping_fragments(monkeypatch):
     nap = by_start["2026-11-20 14:00:00+08:00"]
     assert nap.duration_minutes == 30
     assert nap.is_nap is True
+
+
+@pytest.mark.asyncio
+async def test_iter_vitality_parses_daily_points(monkeypatch):
+    """活力值走 fitness 数据管线（key=vitality），按天入库。"""
+    import json
+
+    adapter = MiFitnessCloudAdapter(user_id="u1", pass_token="p1")
+    adapter._connected = True
+    adapter._client = object()
+
+    raw = json.dumps(
+        {
+            "date_time": 1794700800,
+            "latest_accumulated_vitality": 37,
+            "daily_high_intensity_vitality": 0,
+            "daily_medium_intensity_vitality": 3,
+            "daily_low_intensity_vitality": 1,
+            "suggested_activity_duration": 21,
+            "suggested_activity_type": 1,
+        }
+    )
+
+    async def fake_fetch(key, start_date, end_date, region=None):
+        assert key == "vitality"
+        return [{"time": 1794700800, "zone_offset": 0, "zone_name": "GMT+00:00", "value": raw}]
+
+    monkeypatch.setattr(adapter, "_fetch_key", fake_fetch)
+
+    records = await _collect(adapter.iter_vitality("2026-11-01", "2026-11-30"))
+    assert len(records) == 1
+    record = records[0]
+    assert record.date == "2026-11-15"
+    assert record.accumulated_vitality == 37
+    assert record.medium_intensity_vitality == 3
+    assert record.low_intensity_vitality == 1
+    assert record.suggested_activity_duration_minutes == 21

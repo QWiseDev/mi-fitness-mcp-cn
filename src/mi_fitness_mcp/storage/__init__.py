@@ -15,6 +15,7 @@ from mi_fitness_mcp.models import (
     SleepSession,
     SpO2Sample,
     StressSample,
+    VitalityRecord,
     Workout,
 )
 
@@ -96,6 +97,30 @@ class Database:
                     min_hrv INTEGER,
                     raw_payload TEXT,  -- 云端完整 payload JSON（含 HRV 分位等全部官方字段）
                     UNIQUE(user_id, sleep_id)
+                )
+            """)
+
+            # 每日活力值表
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS vitality_records (
+                    id TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_record_id TEXT,
+                    user_id TEXT NOT NULL,
+                    device_id TEXT,
+                    timezone TEXT DEFAULT 'UTC',
+                    collected_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    date TEXT NOT NULL,
+                    accumulated_vitality INTEGER NOT NULL DEFAULT 0,
+                    high_intensity_vitality INTEGER NOT NULL DEFAULT 0,
+                    medium_intensity_vitality INTEGER NOT NULL DEFAULT 0,
+                    low_intensity_vitality INTEGER NOT NULL DEFAULT 0,
+                    suggested_activity_duration INTEGER,
+                    suggested_activity_type INTEGER,
+                    UNIQUE(user_id, date)
                 )
             """)
 
@@ -673,10 +698,71 @@ class Database:
             ).fetchone()
             return dict(row) if row else None
 
+    def insert_vitality_record(self, record: "VitalityRecord") -> bool:
+        """Insert or update a daily vitality record (upsert by user_id + date)."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO vitality_records (
+                    id, provider, source_type, source_record_id, user_id, device_id,
+                    timezone, collected_at, date, accumulated_vitality,
+                    high_intensity_vitality, medium_intensity_vitality,
+                    low_intensity_vitality, suggested_activity_duration,
+                    suggested_activity_type
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, date) DO UPDATE SET
+                    accumulated_vitality = excluded.accumulated_vitality,
+                    high_intensity_vitality = excluded.high_intensity_vitality,
+                    medium_intensity_vitality = excluded.medium_intensity_vitality,
+                    low_intensity_vitality = excluded.low_intensity_vitality,
+                    suggested_activity_duration = excluded.suggested_activity_duration,
+                    suggested_activity_type = excluded.suggested_activity_type,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    record.id,
+                    record.provider,
+                    record.source_type,
+                    record.source_record_id,
+                    record.user_id,
+                    record.device_id,
+                    record.timezone,
+                    record.collected_at.isoformat() if record.collected_at else None,
+                    record.date,
+                    record.accumulated_vitality,
+                    record.high_intensity_vitality,
+                    record.medium_intensity_vitality,
+                    record.low_intensity_vitality,
+                    record.suggested_activity_duration_minutes,
+                    record.suggested_activity_type,
+                ),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def query_vitality_records(
+        self,
+        user_id: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        """Query daily vitality records by date range."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM vitality_records
+                WHERE user_id = ? AND date >= ? AND date <= ?
+                ORDER BY date
+                """,
+                (user_id, start_date, end_date),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
     def get_data_freshness(self, user_id: str) -> dict[str, str | None]:
         """各数据类型本地最新一条记录的时间戳/日期（ISO 文本，无数据为 None）。"""
         queries = {
             "daily_activity": "SELECT MAX(date) FROM daily_activity WHERE user_id = ?",
+            "vitality": "SELECT MAX(date) FROM vitality_records WHERE user_id = ?",
             "sleep": "SELECT MAX(start_at) FROM sleep_sessions WHERE user_id = ?",
             "workouts": "SELECT MAX(start_at) FROM workouts WHERE user_id = ?",
             "body_measurements": "SELECT MAX(timestamp) FROM body_measurements WHERE user_id = ?",
@@ -851,6 +937,28 @@ class Database:
         """Get data coverage statistics."""
         with self._get_connection() as conn:
             results = []
+
+            # 每日活力值覆盖范围
+            row = conn.execute(
+                """
+                SELECT
+                    MIN(date) as first_date,
+                    MAX(date) as last_date,
+                    COUNT(DISTINCT date) as days_with_data
+                FROM vitality_records
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if row and row["first_date"]:
+                results.append(
+                    {
+                        "data_type": "vitality",
+                        "first_date": row["first_date"],
+                        "last_date": row["last_date"],
+                        "days_with_data": row["days_with_data"],
+                    }
+                )
 
             # 日常活动覆盖范围
             row = conn.execute(

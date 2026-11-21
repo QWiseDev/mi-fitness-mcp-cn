@@ -257,6 +257,16 @@ class SyncService:
                 if last_ts is None or event.start_at > last_ts:
                     last_ts = event.start_at
 
+        elif data_type == "vitality":
+            records = self.adapter.iter_vitality(start_date, end_date)
+            async for record in self._iterate_records(records):
+                if self.db.insert_vitality_record(record):
+                    added += 1
+                else:
+                    updated += 1
+                if last_ts is None or record.collected_at and record.collected_at > last_ts:
+                    last_ts = record.collected_at
+
         else:
             raise ValueError(f"Unknown data type: {data_type}")
 

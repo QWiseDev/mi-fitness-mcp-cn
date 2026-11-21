@@ -65,6 +65,7 @@ DATA_TYPES = [
     "spo2",
     "stress",
     "abnormal_heart_beat",
+    "vitality",
 ]
 
 METRICS = [
@@ -907,6 +908,15 @@ def get_abnormal_heart_beat(
         start_date=_validate_date(start_date, "start_date"),
         end_date=_validate_date(end_date, "end_date"),
         limit=_validate_limit(limit),
+    )
+    return {"status": "ok", "count": len(data), "data": data}
+
+
+@app.get("/api/vitality")
+def get_vitality(request: Request, start_date: str, end_date: str) -> dict:
+    data = _query_service(request).get_vitality_records(
+        start_date=_validate_date(start_date, "start_date"),
+        end_date=_validate_date(end_date, "end_date"),
     )
     return {"status": "ok", "count": len(data), "data": data}
 

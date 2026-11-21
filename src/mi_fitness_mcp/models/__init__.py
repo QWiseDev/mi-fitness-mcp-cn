@@ -33,6 +33,22 @@ class DailyActivity(BaseEntity):
     active_minutes: int | None = Field(None, ge=0, description="Active minutes")
 
 
+class VitalityRecord(BaseEntity):
+    """Daily vitality points (Mi Fitness activity rings / 活力值)."""
+
+    date: str = Field(description="Vitality day in YYYY-MM-DD format")
+    accumulated_vitality: int = Field(ge=0, description="Latest accumulated vitality for the day")
+    high_intensity_vitality: int = Field(ge=0, description="High-intensity vitality points")
+    medium_intensity_vitality: int = Field(ge=0, description="Medium-intensity vitality points")
+    low_intensity_vitality: int = Field(ge=0, description="Low-intensity vitality points")
+    suggested_activity_duration_minutes: int | None = Field(
+        None, ge=0, description="Suggested activity duration to reach the next ring"
+    )
+    suggested_activity_type: int | None = Field(
+        None, description="Suggested activity type code from the cloud"
+    )
+
+
 class SleepStage(BaseModel):
     """Sleep stage information."""
 

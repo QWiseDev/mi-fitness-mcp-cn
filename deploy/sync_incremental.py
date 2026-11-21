@@ -27,6 +27,7 @@ DATA_TYPES = [
     "spo2",
     "stress",
     "abnormal_heart_beat",
+    "vitality",
 ]
 
 

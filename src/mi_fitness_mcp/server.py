@@ -244,6 +244,22 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="query_vitality",
+            description=(
+                "Query daily vitality points (活力值): accumulated vitality per day with "
+                "high/medium/low intensity breakdown and suggested activity to reach the "
+                "next ring."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string"},
+                    "end_date": {"type": "string"},
+                },
+                "required": ["start_date", "end_date"],
+            },
+        ),
+        Tool(
             name="get_health_report",
             description=(
                 "Get an aggregated health report for a date range: per-day steps, calories, "
@@ -368,6 +384,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await _handle_query_abnormal_heart_beat(arguments)
         elif name == "get_data_coverage":
             result = await _handle_get_data_coverage(arguments)
+        elif name == "query_vitality":
+            result = _handle_query_vitality(arguments)
         elif name == "get_health_report":
             result = await _handle_get_health_report(arguments)
         elif name == "get_workout_detail":
@@ -729,6 +747,17 @@ async def _handle_get_data_coverage(arguments: dict) -> dict:
         return {"status": "error", "error": "Query service not initialized"}
     coverage = query_service.get_data_coverage(arguments.get("data_types"))
     return QueryResponse(status="ok", source="cache", data={"coverage": coverage}).model_dump()
+
+
+def _handle_query_vitality(arguments: dict) -> dict:
+    if not query_service:
+        return {"status": "error", "error": "Query service not initialized"}
+    records = query_service.get_vitality_records(
+        start_date=arguments["start_date"], end_date=arguments["end_date"]
+    )
+    return QueryResponse(
+        status="ok", source="cache", data={"records": records, "count": len(records)}
+    ).model_dump()
 
 
 async def _handle_get_health_report(arguments: dict) -> dict:
