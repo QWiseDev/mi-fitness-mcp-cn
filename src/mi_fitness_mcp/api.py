@@ -47,7 +47,12 @@ from mi_fitness_mcp.security import (
 )
 from mi_fitness_mcp.services.latest_data import get_latest_data as _latest_data
 from mi_fitness_mcp.services.query_service import QueryService
-from mi_fitness_mcp.services.sync_service import SyncService
+from mi_fitness_mcp.services.sync_service import (
+    SyncService,
+)
+from mi_fitness_mcp.services.sync_service import (
+    sync_sport_records_incremental as _sport_incremental,
+)
 from mi_fitness_mcp.services.workout_detail import get_workout_detail as _workout_detail
 from mi_fitness_mcp.storage import Database
 
@@ -818,11 +823,24 @@ async def get_workout_detail(request: Request, workout_id: str) -> dict:
 
 @app.get("/api/latest")
 async def get_latest(request: Request) -> dict:
-    """云端最新状态：全局数据游标 + 最新运动记录（value 摘要解析）。"""
+    """云端最新状态：全局数据游标 + 最新运动记录 + 本地各类型数据新鲜度。"""
     ctx = _resolve_context(request)
     await _ensure_adapter_connected(ctx)
-    data = await _latest_data(ctx.adapter)
+    data = await _latest_data(ctx.adapter, request.app.state.db, ctx.user_id)
     return {"status": "ok", **data}
+
+
+@app.post("/api/workouts/sync-incremental")
+async def sync_workouts_incremental(request: Request, watermark: int | None = None) -> dict:
+    """按游标增量同步运动记录：只拉 watermark 之后的变更并 upsert。
+
+    watermark 由调用方持有（首次不传即全量刷新，幂等）；响应携带新游标，
+    作为下次调用的起点。
+    """
+    ctx = _resolve_context(request)
+    await _ensure_adapter_connected(ctx)
+    result = await _sport_incremental(ctx.adapter, request.app.state.db, watermark)
+    return {"status": "ok", **result}
 
 
 @app.get("/api/cloud-watermark")

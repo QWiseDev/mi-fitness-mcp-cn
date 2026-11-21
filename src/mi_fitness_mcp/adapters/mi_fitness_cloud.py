@@ -637,6 +637,49 @@ class MiFitnessCloudAdapter(DataAdapter):
                 raw_payload=payload,
             )
 
+    def _workout_from_item(self, item: dict) -> Workout | None:
+        """把云端原始 sport_record 解析成 Workout 模型；缺起止时间时返回 None。"""
+        payload = self._parse_value(item)
+        zone_offset = int(item.get("zone_offset", 0) or 0)
+        start_ts = payload.get("start_time") or item.get("time")
+        end_ts = payload.get("end_time")
+        duration_seconds = int(payload.get("duration", 0) or 0)
+        if not end_ts and start_ts:
+            end_ts = int(start_ts) + duration_seconds
+        if not start_ts or not end_ts:
+            return None
+
+        start_at = self._timestamp_to_datetime(start_ts, zone_offset)
+        end_at = self._timestamp_to_datetime(end_ts, zone_offset)
+        duration_minutes = max(0, int(duration_seconds // 60))
+        if duration_minutes == 0:
+            duration_minutes = max(0, (int(end_ts) - int(start_ts)) // 60)
+
+        workout_id = f"{item.get('sid', self.user_id)}_{item.get('key', 'workout')}_{item.get('time', start_ts)}"
+        return Workout(
+            id=f"mi_fitness_workout_{workout_id}",
+            provider="mi_fitness",
+            source_type="cloud_session",
+            source_record_id=str(item.get("time", "")) or None,
+            user_id=self.user_id or "unknown",
+            timezone=item.get("zone_name") or "UTC",
+            collected_at=self._record_datetime(item),
+            workout_id=workout_id,
+            activity_type=str(
+                item.get("category") or item.get("key") or payload.get("sport_type") or "workout"
+            ),
+            start_at=start_at,
+            end_at=end_at,
+            duration_minutes=duration_minutes,
+            distance_m=self._optional_float(payload.get("distance")),
+            calories_kcal=self._optional_float(payload.get("calories") or payload.get("total_cal")),
+            avg_heart_rate_bpm=self._optional_int(payload.get("avg_hrm")),
+            max_heart_rate_bpm=self._optional_int(payload.get("max_hrm")),
+            avg_pace_sec_per_km=self._optional_float(payload.get("avg_pace")),
+            max_pace_sec_per_km=self._optional_float(payload.get("max_pace")),
+            total_steps=self._optional_int(payload.get("steps") or payload.get("total_steps")),
+        )
+
     async def iter_workouts(
         self,
         start_date: str | None = None,
@@ -648,51 +691,31 @@ class MiFitnessCloudAdapter(DataAdapter):
 
         records = await self._fetch_sport_records_by_time(start_date, end_date)
         for item in records:
-            payload = self._parse_value(item)
-            zone_offset = int(item.get("zone_offset", 0) or 0)
-            start_ts = payload.get("start_time") or item.get("time")
-            end_ts = payload.get("end_time")
-            duration_seconds = int(payload.get("duration", 0) or 0)
-            if not end_ts and start_ts:
-                end_ts = int(start_ts) + duration_seconds
-            if not start_ts or not end_ts:
-                continue
+            workout = self._workout_from_item(item)
+            if workout is not None:
+                yield workout
 
-            start_at = self._timestamp_to_datetime(start_ts, zone_offset)
-            end_at = self._timestamp_to_datetime(end_ts, zone_offset)
-            duration_minutes = max(0, int(duration_seconds // 60))
-            if duration_minutes == 0:
-                duration_minutes = max(0, (int(end_ts) - int(start_ts)) // 60)
+    async def fetch_sport_records_by_watermark(
+        self, watermark: int, region: str | None = None
+    ) -> dict:
+        """按游标增量拉取运动记录变更；游标为 0 时即全量。
 
-            workout_id = f"{item.get('sid', self.user_id)}_{item.get('key', 'workout')}_{item.get('time', start_ts)}"
-            yield Workout(
-                id=f"mi_fitness_workout_{workout_id}",
-                provider="mi_fitness",
-                source_type="cloud_session",
-                source_record_id=str(item.get("time", "")) or None,
-                user_id=self.user_id or "unknown",
-                timezone=item.get("zone_name") or "UTC",
-                collected_at=self._record_datetime(item),
-                workout_id=workout_id,
-                activity_type=str(
-                    item.get("category")
-                    or item.get("key")
-                    or payload.get("sport_type")
-                    or "workout"
-                ),
-                start_at=start_at,
-                end_at=end_at,
-                duration_minutes=duration_minutes,
-                distance_m=self._optional_float(payload.get("distance")),
-                calories_kcal=self._optional_float(
-                    payload.get("calories") or payload.get("total_cal")
-                ),
-                avg_heart_rate_bpm=self._optional_int(payload.get("avg_hrm")),
-                max_heart_rate_bpm=self._optional_int(payload.get("max_hrm")),
-                avg_pace_sec_per_km=self._optional_float(payload.get("avg_pace")),
-                max_pace_sec_per_km=self._optional_float(payload.get("max_pace")),
-                total_steps=self._optional_int(payload.get("steps") or payload.get("total_steps")),
+        返回 {"sport_records": [...], "watermark": 新游标, "has_more": bool}；
+        分页以返回的新游标继续，游标不前进或 has_more=false 时结束。
+        """
+        base_url = self._region_base_url(region)
+        records: list[dict] = []
+        cursor = int(watermark)
+        for _ in range(self.max_pages):
+            result = await self._request(
+                base_url, "/app/v1/data/get_sport_records_by_watermark", {"watermark": cursor}
             )
+            records.extend(result.get("sport_records", []))
+            next_watermark = int(result.get("watermark") or cursor)
+            if not result.get("has_more") or next_watermark <= cursor:
+                return {"sport_records": records, "watermark": next_watermark, "has_more": False}
+            cursor = next_watermark
+        raise RuntimeError("Mi Fitness sport watermark pagination exceeded safety limit")
 
     async def iter_body_measurements(
         self,

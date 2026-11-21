@@ -1,10 +1,12 @@
-"""云端最新状态：全局游标 + 最新运动记录（value 摘要解析）。"""
+"""云端最新状态：全局游标 + 最新运动记录 + 本地各类型数据新鲜度。"""
 
 import json
 from contextlib import suppress
+from datetime import UTC, datetime
 from typing import Any
 
 from mi_fitness_mcp.adapters.mi_fitness_cloud import MiFitnessCloudAdapter
+from mi_fitness_mcp.storage import Database
 
 
 def _parse_sport_record(record: dict) -> dict[str, Any]:
@@ -41,11 +43,39 @@ def _parse_sport_record(record: dict) -> dict[str, Any]:
     }
 
 
-async def get_latest_data(adapter: MiFitnessCloudAdapter) -> dict[str, Any]:
-    """云端游标 + 最新运动记录；两者独立获取，互不影响。"""
+def _local_freshness(db: Database, user_id: str) -> dict[str, dict[str, Any]]:
+    """本地各类型最新记录时间；时间戳类型附 age_hours（相对 UTC now）。"""
+    freshness: dict[str, dict[str, Any]] = {}
+    now = datetime.now(UTC)
+    for data_type, latest in db.get_data_freshness(user_id).items():
+        if not latest:
+            freshness[data_type] = {"latest": None}
+            continue
+        if data_type == "daily_activity":
+            # 日期粒度（当天活动），不折算时长
+            freshness[data_type] = {"latest_date": latest}
+            continue
+        entry: dict[str, Any] = {"latest": latest}
+        with suppress(ValueError):
+            moment = datetime.fromisoformat(latest)
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=UTC)
+            entry["age_hours"] = round((now - moment).total_seconds() / 3600, 1)
+        freshness[data_type] = entry
+    return freshness
+
+
+async def get_latest_data(
+    adapter: MiFitnessCloudAdapter, db: Database, user_id: str
+) -> dict[str, Any]:
+    """云端游标 + 最新运动记录 + 本地各类型新鲜度；游标未变即无新数据。"""
     cloud_watermark = await adapter.get_max_watermark()
     latest_workout = None
     record = await adapter.get_latest_sport_record()
     if record:
         latest_workout = _parse_sport_record(record)
-    return {"cloud_watermark": cloud_watermark, "latest_workout": latest_workout}
+    return {
+        "cloud_watermark": cloud_watermark,
+        "latest_workout": latest_workout,
+        "freshness": _local_freshness(db, user_id),
+    }

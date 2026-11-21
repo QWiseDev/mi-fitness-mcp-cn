@@ -777,7 +777,7 @@ async def _handle_get_latest_data(arguments: dict) -> dict:
                 "status": "error",
                 "error": "Cloud connect failed; run sync_data first or retry",
             }
-    data = await _latest_data(adapter)
+    data = await _latest_data(adapter, db, query_service.user_id)
     return QueryResponse(status="ok", source="mi_fitness_cloud", data=data).model_dump()
 
 

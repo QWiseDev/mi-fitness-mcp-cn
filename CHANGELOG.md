@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 新增：**运动游标真增量**——适配器 `fetch_sport_records_by_watermark`（分页拉取 watermark 之后的变更记录，游标不前进时自动终止）+ `POST /api/workouts/sync-incremental?watermark=N`（只拉变更并 upsert，响应携带新游标供调用方持久化；首次不传即全量刷新，幂等）；运动解析重构为 `_workout_from_item` 供两条路径共用
+- 新增：`get_latest_data` 与 `GET /api/latest` 附带**本地全类型数据新鲜度**——8 种数据类型各自的最新记录时间，时间戳类型带 `age_hours`，agent 可一次判断"哪个类型的数据旧了需要先同步"
 - 新增：**睡眠官方字段全量入库**——`sleep_sessions` 表新增 13 列（`sleep_efficiency` 官方睡眠效率、`awake_count` 清醒次数、`avg/max/min_hr` 心率、`avg/max/min_spo2` 血氧、`avg_breath` 呼吸率、`avg/max/min_hrv` 心率变异性、`raw_payload` 云端完整 payload JSON 含 HRV 分位与算法版本等全部字段），既有库打开时自动 ALTER 迁移；适配器/模型/查询/睡眠分析全链路透出，分析逐晚行与汇总的效率优先采用云端官方值、缺失时回退计算值
 - 修复：**云端一夜睡眠被拆成多条重叠碎片记录**（App 端 sleep_segment 表同样分片，实测 22:54-06:43 主夜附带 22:54-23:19 与 00:11-01:44 两段碎片），此前每条碎片都被当作独立夜晚入库，30 天数出 54 晚且时长被碎片稀释。适配器现按时间重叠分组合并，每组保留覆盖最宽的代表记录
 - 修复：睡眠时间语义——云端 `duration` 是实际入睡分钟（deep+light+rem），`sleep_awake_duration` 是清醒分钟，两者相加即卧床时长；此前把 `time_asleep` 错算成 `duration - awake`（重复扣减），睡眠效率虚高失真。`time_asleep` 现等于入睡分钟，分析效率改为 入睡/(入睡+清醒)

@@ -673,6 +673,24 @@ class Database:
             ).fetchone()
             return dict(row) if row else None
 
+    def get_data_freshness(self, user_id: str) -> dict[str, str | None]:
+        """各数据类型本地最新一条记录的时间戳/日期（ISO 文本，无数据为 None）。"""
+        queries = {
+            "daily_activity": "SELECT MAX(date) FROM daily_activity WHERE user_id = ?",
+            "sleep": "SELECT MAX(start_at) FROM sleep_sessions WHERE user_id = ?",
+            "workouts": "SELECT MAX(start_at) FROM workouts WHERE user_id = ?",
+            "body_measurements": "SELECT MAX(timestamp) FROM body_measurements WHERE user_id = ?",
+            "heart_rate": "SELECT MAX(timestamp) FROM heart_rate_samples WHERE user_id = ?",
+            "spo2": "SELECT MAX(timestamp) FROM spo2_samples WHERE user_id = ?",
+            "stress": "SELECT MAX(timestamp) FROM stress_samples WHERE user_id = ?",
+            "abnormal_heart_beat": "SELECT MAX(start_at) FROM abnormal_heart_beat_events WHERE user_id = ?",
+        }
+        with self._get_connection() as conn:
+            return {
+                data_type: conn.execute(sql, (user_id,)).fetchone()[0]
+                for data_type, sql in queries.items()
+            }
+
     def query_daily_activity(
         self,
         user_id: str,

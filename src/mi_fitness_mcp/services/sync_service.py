@@ -136,7 +136,9 @@ class SyncService:
                     }
                 )
                 return {
-                    "status": "partial" if any(c.get("status") == "ok" for c in chunks) else "error",
+                    "status": "partial"
+                    if any(c.get("status") == "ok" for c in chunks)
+                    else "error",
                     "data_type": data_type,
                     **totals,
                     "start_date": start_date,
@@ -288,3 +290,26 @@ class SyncService:
         Use this when calling from synchronous code.
         """
         return asyncio.run(self.sync_data_type(data_type, start_date, end_date, force_full))
+
+
+async def sync_sport_records_incremental(
+    adapter, db, watermark: int | None = None
+) -> dict[str, int | None]:
+    """按游标增量同步运动记录：拉取 watermark 之后的变更并 upsert。
+
+    游标由调用方持有（首次传 0 或 None 即全量刷新，upsert 幂等）；
+    返回处理条数与最新游标，调用方持久化后作为下次起点。
+    """
+    result = await adapter.fetch_sport_records_by_watermark(watermark or 0)
+    processed = 0
+    for item in result.get("sport_records", []):
+        workout = adapter._workout_from_item(item)
+        if workout is None:
+            continue
+        if db.insert_workout(workout):
+            processed += 1
+    return {
+        "records_processed": processed,
+        "records_fetched": len(result.get("sport_records", [])),
+        "watermark": result.get("watermark"),
+    }
