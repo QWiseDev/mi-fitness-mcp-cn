@@ -15,6 +15,7 @@ from mi_fitness_mcp.adapters.mi_fitness_cloud import MiFitnessCloudAdapter
 from mi_fitness_mcp.auth import load_mi_fitness_token
 from mi_fitness_mcp.config import load_config
 from mi_fitness_mcp.models import ConnectionStatus, QueryResponse
+from mi_fitness_mcp.services.latest_data import get_latest_data as _latest_data
 from mi_fitness_mcp.services.query_service import QueryService
 from mi_fitness_mcp.services.sync_service import SyncService
 from mi_fitness_mcp.services.workout_detail import get_workout_detail as _workout_detail
@@ -271,6 +272,15 @@ async def list_tools() -> list[Tool]:
                 "required": ["workout_id"],
             },
         ),
+        Tool(
+            name="get_latest_data",
+            description=(
+                "Get the cloud-side latest state: the global data watermark (unchanged "
+                "watermark means no new records in any data domain, i.e. queries are "
+                "already fresh) and the most recent workout with its parsed summary."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
     ]
 
 
@@ -309,6 +319,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await _handle_get_health_report(arguments)
         elif name == "get_workout_detail":
             result = await _handle_get_workout_detail(arguments)
+        elif name == "get_latest_data":
+            result = await _handle_get_latest_data(arguments)
         else:
             result = {"status": "error", "error": f"Unknown tool: {name}"}
         return [TextContent(type="text", text=json.dumps(result, default=str))]
@@ -687,7 +699,27 @@ async def _handle_get_workout_detail(arguments: dict) -> dict:
         detail = await _workout_detail(adapter, db, query_service.user_id, arguments["workout_id"])
     except ValueError as exc:
         return {"status": "error", "error": str(exc)}
-    return QueryResponse(status="ok", source="mi_fitness_cloud", data={"detail": detail}).model_dump()
+    return QueryResponse(
+        status="ok", source="mi_fitness_cloud", data={"detail": detail}
+    ).model_dump()
+
+
+async def _handle_get_latest_data(arguments: dict) -> dict:
+    if not adapter:
+        return {"status": "error", "error": "Adapter not initialized"}
+    if not adapter.is_connected():
+        # 适配器按需连接（与同步流程一致）
+        try:
+            connected = await adapter.connect()
+        except Exception:
+            connected = False
+        if not connected:
+            return {
+                "status": "error",
+                "error": "Cloud connect failed; run sync_data first or retry",
+            }
+    data = await _latest_data(adapter)
+    return QueryResponse(status="ok", source="mi_fitness_cloud", data=data).model_dump()
 
 
 async def main():

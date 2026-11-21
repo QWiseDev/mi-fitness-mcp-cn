@@ -45,6 +45,7 @@ from mi_fitness_mcp.security import (
     load_api_key_secret,
     store_api_key_secret,
 )
+from mi_fitness_mcp.services.latest_data import get_latest_data as _latest_data
 from mi_fitness_mcp.services.query_service import QueryService
 from mi_fitness_mcp.services.sync_service import SyncService
 from mi_fitness_mcp.services.workout_detail import get_workout_detail as _workout_detail
@@ -790,25 +791,47 @@ def get_workouts(
     return {"status": "ok", "count": len(data), "data": data}
 
 
-@app.get("/api/workouts/{workout_id}/detail")
-async def get_workout_detail(request: Request, workout_id: str) -> dict:
-    """单条运动详情：云端 value 摘要（训练效果/心率区间/负荷）+ 本地心率曲线。"""
-    ctx = _resolve_context(request)
+async def _ensure_adapter_connected(ctx: UserContext) -> None:
+    """适配器按需连接（与同步流程一致）；失败抛 503。"""
     if ctx.adapter is None:
         raise HTTPException(status_code=503, detail="Cloud adapter unavailable")
     if not ctx.adapter.is_connected():
-        # 适配器按需连接（与同步流程一致）；失败时降级为仅本地数据
         try:
             connected = await ctx.adapter.connect()
         except Exception:
             connected = False
         if not connected:
             raise HTTPException(status_code=503, detail="Cloud connect failed")
+
+
+@app.get("/api/workouts/{workout_id}/detail")
+async def get_workout_detail(request: Request, workout_id: str) -> dict:
+    """单条运动详情：云端 value 摘要（训练效果/心率区间/负荷）+ 本地心率曲线。"""
+    ctx = _resolve_context(request)
+    await _ensure_adapter_connected(ctx)
     try:
         detail = await _workout_detail(ctx.adapter, request.app.state.db, ctx.user_id, workout_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
     return {"status": "ok", "data": detail}
+
+
+@app.get("/api/latest")
+async def get_latest(request: Request) -> dict:
+    """云端最新状态：全局数据游标 + 最新运动记录（value 摘要解析）。"""
+    ctx = _resolve_context(request)
+    await _ensure_adapter_connected(ctx)
+    data = await _latest_data(ctx.adapter)
+    return {"status": "ok", **data}
+
+
+@app.get("/api/cloud-watermark")
+async def get_cloud_watermark(request: Request) -> dict:
+    """云端全量数据游标；未变化说明所有数据域都没有新记录。"""
+    ctx = _resolve_context(request)
+    await _ensure_adapter_connected(ctx)
+    watermark = await ctx.adapter.get_max_watermark()
+    return {"status": "ok", "watermark": watermark}
 
 
 @app.get("/api/body-measurements")

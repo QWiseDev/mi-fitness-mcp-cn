@@ -368,9 +368,35 @@ class MiFitnessCloudAdapter(DataAdapter):
             return raw
         return json.loads(raw)
 
-    def _timestamp_to_datetime(self, timestamp: Any, zone_offset: int = 0) -> datetime:
+    @staticmethod
+    def _timestamp_to_datetime(timestamp: Any, zone_offset: int = 0) -> datetime:
         tz = timezone(timedelta(seconds=int(zone_offset or 0)))
         return datetime.fromtimestamp(int(timestamp), tz=tz)
+
+    def _region_base_url(self, region: str | None) -> str:
+        region_name = region or self.region
+        return (
+            "https://hlth.io.mi.com"
+            if region_name in ("", "cn")
+            else f"https://{region_name}.hlth.io.mi.com"
+        )
+
+    async def get_max_watermark(self, region: str | None = None) -> int:
+        """云端全量数据游标：与上次一致说明所有数据域都没有新记录。
+
+        端点为 /app/v1/data/get_max_watermark，返回形如 {"watermark": 176514897288538}。
+        """
+        result = await self._request(
+            self._region_base_url(region), "/app/v1/data/get_max_watermark", {}
+        )
+        return int(result["watermark"])
+
+    async def get_latest_sport_record(self, region: str | None = None) -> dict | None:
+        """云端最新一条运动记录（含 value 摘要原文），无记录时返回 None。"""
+        result = await self._request(
+            self._region_base_url(region), "/app/v1/data/get_latest_sport_record", {}
+        )
+        return result.get("sport_record") or None
 
     async def _fetch_sport_records_by_time(
         self, start_date: str, end_date: str, region: str | None = None
