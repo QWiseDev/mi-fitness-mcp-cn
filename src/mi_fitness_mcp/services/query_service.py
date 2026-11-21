@@ -1,7 +1,7 @@
 """Query service for retrieving data from database."""
 
 from contextlib import suppress
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from mi_fitness_mcp.storage import Database
@@ -197,6 +197,251 @@ class QueryService:
             "days": days,
         }
 
+    def get_sleep_analysis(self, start_date: str, end_date: str) -> dict[str, Any]:
+        """Aggregate main-sleep sessions for a range: per-night rows + summary stats.
+
+        会话按 start_at 归属日期（与 sleep_minutes 序列一致）；小睡只计总量，
+        不进逐晚明细。
+        """
+        sessions = self.get_sleep_sessions(start_date, end_date, include_naps=True)
+        main = [s for s in sessions if not s.get("is_nap")]
+        naps = [s for s in sessions if s.get("is_nap")]
+
+        nights = []
+        for session in sorted(main, key=lambda s: s["start_at"]):
+            # 同一分期会有多段（每晚十几段很常见），必须累加而不是覆盖
+            stages: dict[str, int] = {}
+            for stage in session.get("stages") or []:
+                stages[stage["stage"]] = stages.get(stage["stage"], 0) + (stage.get("minutes") or 0)
+            duration = session.get("duration_minutes") or 0  # 实际入睡分钟
+            awake = session.get("time_awake_minutes") or 0
+            bed_total = duration + awake
+            nights.append(
+                {
+                    "date": str(session["start_at"])[:10],
+                    "bedtime": str(session["start_at"])[11:16],
+                    "wake_time": str(session["end_at"])[11:16],
+                    "duration_minutes": session["duration_minutes"],
+                    "time_asleep_minutes": session["time_asleep_minutes"],
+                    "efficiency_pct": round(duration / bed_total * 100, 1) if bed_total else None,
+                    "sleep_score": session.get("sleep_score"),
+                    "sleep_efficiency": session.get("sleep_efficiency"),
+                    "awake_count": session.get("awake_count"),
+                    "avg_hr": session.get("avg_hr"),
+                    "avg_spo2": session.get("avg_spo2"),
+                    "avg_breath": session.get("avg_breath"),
+                    "avg_hrv": session.get("avg_hrv"),
+                    "deep_minutes": stages.get("deep"),
+                    "light_minutes": stages.get("light"),
+                    "rem_minutes": stages.get("rem"),
+                    "awake_minutes": stages.get("awake"),
+                }
+            )
+
+        def _avg(values: list) -> float | None:
+            return round(sum(values) / len(values), 1) if values else None
+
+        durations = [n["duration_minutes"] for n in nights if n["duration_minutes"] is not None]
+        asleep_values = [
+            n["time_asleep_minutes"] for n in nights if n["time_asleep_minutes"] is not None
+        ]
+        # 效率优先取云端官方值，缺失时回退到 入睡/(入睡+清醒)
+        efficiency_values = [
+            n["sleep_efficiency"] if n["sleep_efficiency"] is not None else n["efficiency_pct"]
+            for n in nights
+        ]
+        efficiency_values = [v for v in efficiency_values if v is not None]
+        scores = [n["sleep_score"] for n in nights if n["sleep_score"] is not None]
+
+        stage_sums = {}
+        for stage in ("deep", "light", "rem", "awake"):
+            values = [n[f"{stage}_minutes"] or 0 for n in nights]
+            stage_sums[stage] = sum(values)
+        stage_total = sum(stage_sums.values())
+
+        bedtime_minutes = []
+        for night in nights:
+            minutes = self._clock_minutes(night["bedtime"])
+            if minutes is not None:
+                # 跨午夜的就寝时间（00:xx-11:xx）折算到前一天晚上，避免均值绕回
+                bedtime_minutes.append(minutes + 1440 if minutes < 720 else minutes)
+        wake_minutes = [self._clock_minutes(n["wake_time"]) for n in nights]
+        wake_minutes = [m for m in wake_minutes if m is not None]
+
+        weekday = [
+            n["duration_minutes"]
+            for n in nights
+            if n["duration_minutes"] is not None and date.fromisoformat(n["date"]).weekday() < 5
+        ]
+        weekend = [
+            n["duration_minutes"]
+            for n in nights
+            if n["duration_minutes"] is not None and date.fromisoformat(n["date"]).weekday() >= 5
+        ]
+        half = len(durations) // 2
+
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "nights_count": len(nights),
+            "nights": nights,
+            "summary": {
+                "avg_duration_minutes": _avg(durations),
+                "avg_time_asleep_minutes": _avg(asleep_values),
+                "avg_efficiency_pct": _avg(efficiency_values),
+                "avg_sleep_score": _avg(scores),
+                "avg_bedtime": self._fmt_clock(_avg(bedtime_minutes) % 1440)
+                if bedtime_minutes
+                else None,
+                "avg_wake_time": self._fmt_clock(_avg(wake_minutes)) if wake_minutes else None,
+                "stage_share_pct": (
+                    {
+                        stage: round(sums / stage_total * 100, 1)
+                        for stage, sums in stage_sums.items()
+                    }
+                    if stage_total
+                    else None
+                ),
+                "weekday_avg_minutes": _avg(weekday),
+                "weekend_avg_minutes": _avg(weekend),
+                "trend": (
+                    {
+                        "first_half_avg_minutes": _avg(durations[:half]),
+                        "second_half_avg_minutes": _avg(durations[half:]),
+                    }
+                    if len(durations) >= 4
+                    else None
+                ),
+            },
+            "naps_count": len(naps),
+            "naps_total_minutes": sum(s.get("duration_minutes") or 0 for s in naps),
+        }
+
+    def compare_periods(
+        self,
+        start_1: str,
+        end_1: str,
+        start_2: str,
+        end_2: str,
+    ) -> dict[str, Any]:
+        """Compare two date ranges (period_1 vs period_2) via health reports.
+
+        合计对区间长度敏感，只对平均值计算差值；合计原样给出。
+        """
+        report_1 = self.get_health_report(start_1, end_1)
+        report_2 = self.get_health_report(start_2, end_2)
+        deltas = {
+            metric: (
+                round((report_1["averages"][metric] or 0) - (report_2["averages"][metric] or 0), 1)
+                if report_1["averages"][metric] is not None
+                and report_2["averages"][metric] is not None
+                else None
+            )
+            for metric in report_1["averages"]
+        }
+        return {
+            "period_1": {
+                "start_date": start_1,
+                "end_date": end_1,
+                **{k: report_1[k] for k in ("days_with_data", "totals", "averages")},
+            },
+            "period_2": {
+                "start_date": start_2,
+                "end_date": end_2,
+                **{k: report_2[k] for k in ("days_with_data", "totals", "averages")},
+            },
+            "deltas": deltas,
+        }
+
+    def detect_anomalies(
+        self, start_date: str, end_date: str, recent_days: int = 7
+    ) -> dict[str, Any]:
+        """Compare the last `recent_days` of a window against the baseline before it.
+
+        规则（基线与近期都至少有数据才判）：
+        - resting_heart_rate：近期均值比基线高 >=5 bpm → warn
+        - spo2_pct：近期均值比基线低 >=2 pct → warn
+        - stress_score：近期均值比基线高 >=10 → info
+        - sleep_minutes：近期均值比基线低 >=45 分钟或 15% → warn
+        """
+        all_daily = {
+            metric: self._metric_daily_values(metric, start_date, end_date)
+            for metric in ("resting_heart_rate", "spo2_pct", "stress_score", "sleep_minutes")
+        }
+        dates = sorted(set().union(*(values.keys() for values in all_daily.values())))
+        if not dates:
+            return {
+                "start_date": start_date,
+                "end_date": end_date,
+                "recent_days": recent_days,
+                "findings": [],
+                "note": "窗口内无数据",
+            }
+        recent_dates = set(dates[-recent_days:])
+
+        findings = []
+        baseline_days = 0
+        rules = {
+            "resting_heart_rate": ("higher", 5.0, "warn"),
+            "spo2_pct": ("lower", 2.0, "warn"),
+            "stress_score": ("higher", 10.0, "info"),
+            "sleep_minutes": ("lower", 45.0, "warn"),
+        }
+        for metric, (direction, threshold, severity) in rules.items():
+            values = all_daily[metric]
+            baseline = [values[d] for d in dates if d not in recent_dates and d in values]
+            current = [values[d] for d in dates if d in recent_dates and d in values]
+            if metric == "resting_heart_rate":
+                baseline_days = len(baseline)
+            if len(baseline) < 5 or len(current) < 3:
+                continue
+            base_avg = sum(baseline) / len(baseline)
+            recent_avg = sum(current) / len(current)
+            delta = round(recent_avg - base_avg, 1)
+            hit = (
+                delta >= threshold
+                if direction == "higher"
+                else base_avg - recent_avg >= threshold
+                or (base_avg and recent_avg / base_avg <= 0.85 and metric == "sleep_minutes")
+            )
+            if hit:
+                findings.append(
+                    {
+                        "metric": metric,
+                        "baseline_avg": round(base_avg, 1),
+                        "recent_avg": round(recent_avg, 1),
+                        "delta": delta,
+                        "direction": direction,
+                        "severity": severity,
+                        "baseline_days": len(baseline),
+                        "recent_days_with_data": len(current),
+                    }
+                )
+
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "recent_days": recent_days,
+            "baseline_days": baseline_days,
+            "findings": findings,
+            "checked": list(rules),
+        }
+
+    @staticmethod
+    def _clock_minutes(text: str) -> int | None:
+        try:
+            hour, minute = text.split(":")
+            return int(hour) * 60 + int(minute)
+        except (ValueError, AttributeError):
+            return None
+
+    @staticmethod
+    def _fmt_clock(minutes: float | int | None) -> str | None:
+        if minutes is None:
+            return None
+        minutes = int(round(minutes)) % 1440
+        return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
     def _aggregate_by_week(
         self,
         series: list[dict],
@@ -289,6 +534,18 @@ class QueryService:
                 "time_awake_minutes": record["time_awake_minutes"],
                 "sleep_score": record.get("sleep_score"),
                 "is_nap": record.get("is_nap", False),
+                "sleep_efficiency": record.get("sleep_efficiency"),
+                "awake_count": record.get("awake_count"),
+                "avg_hr": record.get("avg_hr"),
+                "max_hr": record.get("max_hr"),
+                "min_hr": record.get("min_hr"),
+                "avg_spo2": record.get("avg_spo2"),
+                "max_spo2": record.get("max_spo2"),
+                "min_spo2": record.get("min_spo2"),
+                "avg_breath": record.get("avg_breath"),
+                "avg_hrv": record.get("avg_hrv"),
+                "max_hrv": record.get("max_hrv"),
+                "min_hrv": record.get("min_hrv"),
             }
 
             # 如有睡眠阶段信息则解析
@@ -297,6 +554,13 @@ class QueryService:
 
                 with suppress(json.JSONDecodeError):
                     session["stages"] = json.loads(record["stages"])
+
+            # 云端完整 payload（HRV 分位、算法版本等全部官方字段）
+            if record.get("raw_payload"):
+                import json
+
+                with suppress(json.JSONDecodeError):
+                    session["raw_payload"] = json.loads(record["raw_payload"])
 
             sessions.append(session)
 

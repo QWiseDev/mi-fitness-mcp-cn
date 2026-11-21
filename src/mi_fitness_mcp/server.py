@@ -281,6 +281,59 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
+        Tool(
+            name="query_sleep_analysis",
+            description=(
+                "Analyze sleep for a date range: per-night duration/efficiency/score with "
+                "deep/light/rem/awake stage breakdown, plus averages (bedtime, wake time, "
+                "weekday vs weekend, first-half vs second-half trend) and nap totals. "
+                "Preferred over raw query_sleep when summarizing or trending sleep."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string"},
+                    "end_date": {"type": "string"},
+                },
+                "required": ["start_date", "end_date"],
+            },
+        ),
+        Tool(
+            name="compare_periods",
+            description=(
+                "Compare two date ranges (period_1 vs period_2) on steps, calories, sleep, "
+                "resting heart rate, SpO2 and stress: totals and per-day averages for each "
+                "range plus deltas on the averages."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date_1": {"type": "string"},
+                    "end_date_1": {"type": "string"},
+                    "start_date_2": {"type": "string"},
+                    "end_date_2": {"type": "string"},
+                },
+                "required": ["start_date_1", "end_date_1", "start_date_2", "end_date_2"],
+            },
+        ),
+        Tool(
+            name="detect_anomalies",
+            description=(
+                "Detect recent health anomalies: within a window, compare the last "
+                "`recent_days` against the baseline before them for resting heart rate "
+                "(+5 bpm), SpO2 (-2 pct), stress (+10) and sleep duration (-45 min or "
+                "-15%). Requires enough data in both halves; returns findings only."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string"},
+                    "end_date": {"type": "string"},
+                    "recent_days": {"type": "integer", "default": 7},
+                },
+                "required": ["start_date", "end_date"],
+            },
+        ),
     ]
 
 
@@ -321,6 +374,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await _handle_get_workout_detail(arguments)
         elif name == "get_latest_data":
             result = await _handle_get_latest_data(arguments)
+        elif name == "query_sleep_analysis":
+            result = _handle_query_sleep_analysis(arguments)
+        elif name == "compare_periods":
+            result = _handle_compare_periods(arguments)
+        elif name == "detect_anomalies":
+            result = _handle_detect_anomalies(arguments)
         else:
             result = {"status": "error", "error": f"Unknown tool: {name}"}
         return [TextContent(type="text", text=json.dumps(result, default=str))]
@@ -720,6 +779,38 @@ async def _handle_get_latest_data(arguments: dict) -> dict:
             }
     data = await _latest_data(adapter)
     return QueryResponse(status="ok", source="mi_fitness_cloud", data=data).model_dump()
+
+
+def _handle_query_sleep_analysis(arguments: dict) -> dict:
+    if not query_service:
+        return {"status": "error", "error": "Query service not initialized"}
+    analysis = query_service.get_sleep_analysis(
+        start_date=arguments["start_date"], end_date=arguments["end_date"]
+    )
+    return QueryResponse(status="ok", source="cache", data={"analysis": analysis}).model_dump()
+
+
+def _handle_compare_periods(arguments: dict) -> dict:
+    if not query_service:
+        return {"status": "error", "error": "Query service not initialized"}
+    result = query_service.compare_periods(
+        start_1=arguments["start_date_1"],
+        end_1=arguments["end_date_1"],
+        start_2=arguments["start_date_2"],
+        end_2=arguments["end_date_2"],
+    )
+    return QueryResponse(status="ok", source="cache", data={"comparison": result}).model_dump()
+
+
+def _handle_detect_anomalies(arguments: dict) -> dict:
+    if not query_service:
+        return {"status": "error", "error": "Query service not initialized"}
+    result = query_service.detect_anomalies(
+        start_date=arguments["start_date"],
+        end_date=arguments["end_date"],
+        recent_days=arguments.get("recent_days", 7),
+    )
+    return QueryResponse(status="ok", source="cache", data={"anomalies": result}).model_dump()
 
 
 async def main():

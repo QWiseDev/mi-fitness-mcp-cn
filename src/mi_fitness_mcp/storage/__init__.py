@@ -82,6 +82,19 @@ class Database:
                     sleep_score INTEGER,
                     is_nap BOOLEAN DEFAULT FALSE,
                     stages TEXT,  -- JSON array of sleep stages
+                    sleep_efficiency INTEGER,  -- 云端官方睡眠效率（%）
+                    awake_count INTEGER,
+                    avg_hr INTEGER,
+                    max_hr INTEGER,
+                    min_hr INTEGER,
+                    avg_spo2 INTEGER,
+                    max_spo2 INTEGER,
+                    min_spo2 INTEGER,
+                    avg_breath INTEGER,
+                    avg_hrv INTEGER,
+                    max_hrv INTEGER,
+                    min_hrv INTEGER,
+                    raw_payload TEXT,  -- 云端完整 payload JSON（含 HRV 分位等全部官方字段）
                     UNIQUE(user_id, sleep_id)
                 )
             """)
@@ -263,6 +276,29 @@ class Database:
                 ON abnormal_heart_beat_events(user_id, start_at)
             """)
 
+            # 轻量迁移：为既有库补齐 sleep_sessions 的官方扩展列
+            existing = {
+                row[1] for row in conn.execute("PRAGMA table_info(sleep_sessions)").fetchall()
+            }
+            sleep_additions = [
+                ("sleep_efficiency", "INTEGER"),
+                ("awake_count", "INTEGER"),
+                ("avg_hr", "INTEGER"),
+                ("max_hr", "INTEGER"),
+                ("min_hr", "INTEGER"),
+                ("avg_spo2", "INTEGER"),
+                ("max_spo2", "INTEGER"),
+                ("min_spo2", "INTEGER"),
+                ("avg_breath", "INTEGER"),
+                ("avg_hrv", "INTEGER"),
+                ("max_hrv", "INTEGER"),
+                ("min_hrv", "INTEGER"),
+                ("raw_payload", "TEXT"),
+            ]
+            for column, definition in sleep_additions:
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE sleep_sessions ADD COLUMN {column} {definition}")
+
             conn.commit()
 
     @contextmanager
@@ -329,14 +365,31 @@ class Database:
                 INSERT INTO sleep_sessions (
                     id, provider, source_type, source_record_id, user_id, device_id,
                     timezone, collected_at, sleep_id, start_at, end_at, duration_minutes,
-                    time_asleep_minutes, time_awake_minutes, sleep_score, is_nap, stages
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    time_asleep_minutes, time_awake_minutes, sleep_score, is_nap, stages,
+                    sleep_efficiency, awake_count, avg_hr, max_hr, min_hr,
+                    avg_spo2, max_spo2, min_spo2, avg_breath,
+                    avg_hrv, max_hrv, min_hrv, raw_payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id, sleep_id) DO UPDATE SET
                     duration_minutes = excluded.duration_minutes,
                     time_asleep_minutes = excluded.time_asleep_minutes,
                     time_awake_minutes = excluded.time_awake_minutes,
                     sleep_score = excluded.sleep_score,
+                    is_nap = excluded.is_nap,
                     stages = excluded.stages,
+                    sleep_efficiency = excluded.sleep_efficiency,
+                    awake_count = excluded.awake_count,
+                    avg_hr = excluded.avg_hr,
+                    max_hr = excluded.max_hr,
+                    min_hr = excluded.min_hr,
+                    avg_spo2 = excluded.avg_spo2,
+                    max_spo2 = excluded.max_spo2,
+                    min_spo2 = excluded.min_spo2,
+                    avg_breath = excluded.avg_breath,
+                    avg_hrv = excluded.avg_hrv,
+                    max_hrv = excluded.max_hrv,
+                    min_hrv = excluded.min_hrv,
+                    raw_payload = excluded.raw_payload,
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -357,6 +410,21 @@ class Database:
                     sleep.sleep_score,
                     sleep.is_nap,
                     json.dumps([s.model_dump() for s in sleep.stages]),
+                    sleep.sleep_efficiency,
+                    sleep.awake_count,
+                    sleep.avg_hr,
+                    sleep.max_hr,
+                    sleep.min_hr,
+                    sleep.avg_spo2,
+                    sleep.max_spo2,
+                    sleep.min_spo2,
+                    sleep.avg_breath,
+                    sleep.avg_hrv,
+                    sleep.max_hrv,
+                    sleep.min_hrv,
+                    json.dumps(sleep.raw_payload, ensure_ascii=False)
+                    if sleep.raw_payload
+                    else None,
                 ),
             )
             conn.commit()

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 新增：**睡眠官方字段全量入库**——`sleep_sessions` 表新增 13 列（`sleep_efficiency` 官方睡眠效率、`awake_count` 清醒次数、`avg/max/min_hr` 心率、`avg/max/min_spo2` 血氧、`avg_breath` 呼吸率、`avg/max/min_hrv` 心率变异性、`raw_payload` 云端完整 payload JSON 含 HRV 分位与算法版本等全部字段），既有库打开时自动 ALTER 迁移；适配器/模型/查询/睡眠分析全链路透出，分析逐晚行与汇总的效率优先采用云端官方值、缺失时回退计算值
+- 修复：**云端一夜睡眠被拆成多条重叠碎片记录**（App 端 sleep_segment 表同样分片，实测 22:54-06:43 主夜附带 22:54-23:19 与 00:11-01:44 两段碎片），此前每条碎片都被当作独立夜晚入库，30 天数出 54 晚且时长被碎片稀释。适配器现按时间重叠分组合并，每组保留覆盖最宽的代表记录
+- 修复：睡眠时间语义——云端 `duration` 是实际入睡分钟（deep+light+rem），`sleep_awake_duration` 是清醒分钟，两者相加即卧床时长；此前把 `time_asleep` 错算成 `duration - awake`（重复扣减），睡眠效率虚高失真。`time_asleep` 现等于入睡分钟，分析效率改为 入睡/(入睡+清醒)
+- 新增：小睡标记——云端不带 is_nap，适配器按本地开始时间（08:00-19:59）启发式标记，`query_sleep` 的 `include_naps=false` 过滤随之生效
+- 修复：**睡眠分期映射整体错误**——云端 `items[].state` 真实编码为 2=deep / 3=light / 4=rem / 5=awake（由真实账号 items 分段直方图与顶层 `sleep_deep/light/rem/awake_duration` 聚合逐夜对账得出，字段名与 APK 内一致）；此前映射为猜测值，把深睡错标成浅睡、REM 与清醒互换，导致库里从无 deep 记录且 time_asleep 虚高。同时修正清醒时长字段名（`awake_duration` → `sleep_awake_duration`）。受影响的历史睡眠数据需用 `force_full_sync` 重拉 sleep
+- 修复：`get_sleep_analysis` 分期分钟数对同一分期多段数据只保留最后一段（dict 推导覆盖）而非累加，深/浅/REM 占比失真
+- 新增：三个本地聚合分析工具（MCP + REST，纯 SQLite 不触云）：`query_sleep_analysis`（`/api/sleep-analysis`，逐晚时长/效率/评分 + 深浅 REM 分期、入睡/起床均值含跨午夜折算、工作日 vs 周末、前后半程趋势、小睡合计）；`compare_periods`（`/api/compare-periods`，两区间 health report 对比，仅对平均值算差值）；`detect_anomalies`（`/api/anomalies`，窗口末段 vs 基线：静息心率 +5bpm / 血氧 -2pct / 压力 +10 / 睡眠 -45min 或 -15%，基线与近期数据不足时不误报）
 - 新增：云端 watermark 增量能力（来自 APK 静态分析发现的未用端点）：适配器 `get_max_watermark` / `get_latest_sport_record`；REST `GET /api/latest`（云端游标 + 最新运动含 value 摘要）与 `GET /api/cloud-watermark`；MCP 工具 `get_latest_data`（第 17 个）——游标未变化即代表所有数据域无新记录
 - 新增：每小时增量同步接入 watermark 短路——云端游标与上次成功拉取一致且距上次全量不足 6 小时时直接跳过本轮（游标获取失败仍照常全量，最坏 6 小时全量一次），把定时任务从"每小时重查 3 天"降为"每小时 1 次游标探测"
 - 新增：`get_workout_detail`（MCP 工具 + REST `/api/workouts/{workout_id}/detail`）：云端运动记录内嵌的 `value` 摘要（训练效果、心率区间时长、训练负荷、恢复时间等 App 详情页数据）+ 本地运动窗口内心率样本曲线；适配器离线或云端无该记录时仍返回本地数据。GPS 轨迹/分段需未公开的云端详情接口，暂不包含

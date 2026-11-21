@@ -440,12 +440,15 @@ class MiFitnessCloudAdapter(DataAdapter):
         return items
 
     def _sleep_stage_name(self, state: Any) -> str:
+        # 编码由真实数据对账得出：云端 items 的分段直方图与顶层
+        # sleep_deep/light/rem/awake_duration 聚合值逐夜吻合（2026-11 实测，
+        # 见 tests/test_mi_fitness_cloud.py）。此前映射为猜测值，把 deep
+        # 错标成 light、rem/awake 互换。
         mapping = {
-            1: "deep",
-            2: "light",
+            2: "deep",
             3: "light",
-            4: "awake",
-            5: "rem",
+            4: "rem",
+            5: "awake",
         }
         try:
             return mapping.get(int(state), "light")
@@ -538,6 +541,12 @@ class MiFitnessCloudAdapter(DataAdapter):
             yield
 
         records = await self._fetch_key("sleep", start_date, end_date)
+
+        # 云端把一夜睡眠拆成多条重叠碎片（App 端 sleep_segment 表同样分片存储，
+        # 展示时自行合并）。实测同晚碎片会落在主记录区间内（如 22:54-06:43 主夜
+        # 携带 00:11-01:44 的 93 分钟碎片），因此按时间重叠分组，每组保留覆盖
+        # 最宽的一条作为该夜代表。
+        parsed: list[tuple[dict, dict, int, int, int]] = []
         for item in records:
             payload = self._parse_value(item)
             zone_offset = int(item.get("zone_offset", 0) or 0)
@@ -554,16 +563,30 @@ class MiFitnessCloudAdapter(DataAdapter):
             )
             if not sleep_start or not sleep_end:
                 continue
+            parsed.append((item, payload, int(sleep_start), int(sleep_end), zone_offset))
 
+        parsed.sort(key=lambda row: row[2])
+        groups: list[list[tuple[dict, dict, int, int, int]]] = []
+        for row in parsed:
+            if groups and row[2] < groups[-1][-1][3]:
+                groups[-1].append(row)  # 与当前组的已覆盖区间重叠
+            else:
+                groups.append([row])
+
+        for group in groups:
+            item, payload, sleep_start, sleep_end, zone_offset = max(
+                group, key=lambda row: row[3] - row[2]
+            )
             start_at = self._timestamp_to_datetime(sleep_start, zone_offset)
             end_at = self._timestamp_to_datetime(sleep_end, zone_offset)
+            # payload.duration 是实际入睡分钟数（deep+light+rem，不含清醒）；
+            # 顶层 sleep_awake_duration 是入睡期间的清醒分钟，两者相加即卧床时长。
             duration_minutes = int(
-                payload.get("duration") or max(0, (int(sleep_end) - int(sleep_start)) // 60)
+                payload.get("duration") or max(0, (sleep_end - sleep_start) // 60)
             )
             awake_minutes = int(
-                payload.get("awake_duration") or payload.get("sleep_awake_duration") or 0
+                payload.get("sleep_awake_duration") or payload.get("awake_duration") or 0
             )
-            asleep_minutes = max(0, duration_minutes - awake_minutes)
 
             stages: list[SleepStage] = []
             for segment in payload.get("items", []) or []:
@@ -580,7 +603,7 @@ class MiFitnessCloudAdapter(DataAdapter):
                 except Exception:
                     continue
 
-            sleep_id = f"{item.get('sid', self.user_id)}_{item.get('time', int(sleep_end))}"
+            sleep_id = f"{item.get('sid', self.user_id)}_{item.get('time', sleep_end)}"
             yield SleepSession(
                 id=f"mi_fitness_sleep_{sleep_id}",
                 provider="mi_fitness",
@@ -593,11 +616,25 @@ class MiFitnessCloudAdapter(DataAdapter):
                 start_at=start_at,
                 end_at=end_at,
                 duration_minutes=duration_minutes,
-                time_asleep_minutes=asleep_minutes,
+                time_asleep_minutes=duration_minutes,
                 time_awake_minutes=awake_minutes,
                 sleep_score=self._optional_int(payload.get("score") or payload.get("sleep_score")),
-                is_nap=bool(payload.get("is_nap", False)),
+                # 云端不带小睡标记：白天（本地 08:00-19:59）开始的会话按小睡处理
+                is_nap=bool(payload.get("is_nap", False)) or 8 <= start_at.hour <= 19,
                 stages=stages,
+                sleep_efficiency=self._optional_int(payload.get("sleep_efficiency")),
+                awake_count=self._optional_int(payload.get("awake_count")),
+                avg_hr=self._optional_int(payload.get("avg_hr")),
+                max_hr=self._optional_int(payload.get("max_hr")),
+                min_hr=self._optional_int(payload.get("min_hr")),
+                avg_spo2=self._optional_int(payload.get("avg_spo2")),
+                max_spo2=self._optional_int(payload.get("max_spo2")),
+                min_spo2=self._optional_int(payload.get("min_spo2")),
+                avg_breath=self._optional_int(payload.get("avg_breath")),
+                avg_hrv=self._optional_int(payload.get("avg_hrv")),
+                max_hrv=self._optional_int(payload.get("max_hrv")),
+                min_hrv=self._optional_int(payload.get("min_hrv")),
+                raw_payload=payload,
             )
 
     async def iter_workouts(

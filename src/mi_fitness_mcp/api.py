@@ -908,6 +908,49 @@ def get_health_report(request: Request, start_date: str, end_date: str) -> dict:
     return {"status": "ok", **report}
 
 
+@app.get("/api/sleep-analysis")
+def get_sleep_analysis(request: Request, start_date: str, end_date: str) -> dict:
+    analysis = _query_service(request).get_sleep_analysis(
+        start_date=_validate_date(start_date, "start_date"),
+        end_date=_validate_date(end_date, "end_date"),
+    )
+    return {"status": "ok", **analysis}
+
+
+@app.get("/api/compare-periods")
+def get_compare_periods(
+    request: Request,
+    start_date_1: str,
+    end_date_1: str,
+    start_date_2: str,
+    end_date_2: str,
+) -> dict:
+    result = _query_service(request).compare_periods(
+        start_1=_validate_date(start_date_1, "start_date_1"),
+        end_1=_validate_date(end_date_1, "end_date_1"),
+        start_2=_validate_date(start_date_2, "start_date_2"),
+        end_2=_validate_date(end_date_2, "end_date_2"),
+    )
+    return {"status": "ok", **result}
+
+
+@app.get("/api/anomalies")
+def get_anomalies(
+    request: Request,
+    start_date: str,
+    end_date: str,
+    recent_days: int = 7,
+) -> dict:
+    if recent_days < 1:
+        raise HTTPException(status_code=400, detail="recent_days 必须为正数")
+    result = _query_service(request).detect_anomalies(
+        start_date=_validate_date(start_date, "start_date"),
+        end_date=_validate_date(end_date, "end_date"),
+        recent_days=recent_days,
+    )
+    return {"status": "ok", **result}
+
+
 def _to_csv(rows: list[dict[str, Any]]) -> str:
     """把查询结果扁平化为 CSV（嵌套结构转 JSON 字符串，加 BOM 便于 Excel 打开中文）。"""
     import csv

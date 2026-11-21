@@ -52,6 +52,24 @@ class SleepSession(BaseEntity):
     sleep_score: int | None = Field(None, ge=0, le=100, description="Sleep quality score")
     is_nap: bool = Field(default=False, description="Whether this is a nap")
     stages: list[SleepStage] = Field(default_factory=list, description="Sleep stages breakdown")
+    # 云端官方扩展字段（缺省即该记录未上报）
+    sleep_efficiency: int | None = Field(
+        None, ge=0, le=100, description="Official sleep efficiency in percent"
+    )
+    awake_count: int | None = Field(None, ge=0, description="Awake episodes during sleep")
+    avg_hr: int | None = Field(None, ge=0, description="Average heart rate during sleep")
+    max_hr: int | None = Field(None, ge=0, description="Maximum heart rate during sleep")
+    min_hr: int | None = Field(None, ge=0, description="Minimum heart rate during sleep")
+    avg_spo2: int | None = Field(None, ge=0, le=100, description="Average SpO2 during sleep")
+    max_spo2: int | None = Field(None, ge=0, le=100, description="Maximum SpO2 during sleep")
+    min_spo2: int | None = Field(None, ge=0, le=100, description="Minimum SpO2 during sleep")
+    avg_breath: int | None = Field(None, ge=0, description="Average breath rate per minute")
+    avg_hrv: int | None = Field(None, ge=0, description="Average HRV during sleep")
+    max_hrv: int | None = Field(None, ge=0, description="Maximum HRV during sleep")
+    min_hrv: int | None = Field(None, ge=0, description="Minimum HRV during sleep")
+    raw_payload: dict | None = Field(
+        None, description="Full cloud payload JSON (HRV quantiles, algorithm version, etc.)"
+    )
 
 
 class Workout(BaseEntity):
