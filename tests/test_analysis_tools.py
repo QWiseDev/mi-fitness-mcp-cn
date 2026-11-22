@@ -100,8 +100,8 @@ def insert_daily_metric(db, day, rhr=None, spo2=None, stress=None, sleep_minutes
         insert_sleep(
             db,
             f"s-{day}",
-            datetime.fromisoformat(f"{day}T23:30:00+08:00"),
-            datetime.fromisoformat(f"{day}T23:30:00+08:00") + timedelta(minutes=sleep_minutes),
+            datetime.fromisoformat(f"{day}T10:00:00+08:00"),
+            datetime.fromisoformat(f"{day}T10:00:00+08:00") + timedelta(minutes=sleep_minutes),
             sleep_minutes,
             sleep_minutes - 30,
             {"deep": 60, "light": 240, "rem": 90, "awake": 30},
@@ -145,8 +145,8 @@ def test_sleep_analysis_nights_and_summary(tmp_path):
     insert_sleep(
         db,
         "n4",
-        datetime(2026, 11, 15, 0, 10, tzinfo=TZ),
-        datetime(2026, 11, 15, 7, 10, tzinfo=TZ),
+        datetime(2026, 11, 13, 23, 30, tzinfo=TZ),
+        datetime(2026, 11, 14, 6, 40, tzinfo=TZ),
         420,
         380,
         {"deep": 45, "light": 235, "rem": 85, "awake": 55},
@@ -169,7 +169,7 @@ def test_sleep_analysis_nights_and_summary(tmp_path):
     assert result["naps_count"] == 1
     assert result["naps_total_minutes"] == 30
     night1 = result["nights"][0]
-    assert night1["date"] == "2026-11-09"
+    assert night1["date"] == "2026-11-10"  # 起床日归属
     assert night1["deep_minutes"] == 60
     assert night1["efficiency_pct"] == 92.3  # 480 入睡 / (480+40) 卧床
     assert night1["sleep_efficiency"] == 90  # 云端官方值
@@ -180,8 +180,8 @@ def test_sleep_analysis_nights_and_summary(tmp_path):
     assert summary["avg_efficiency_pct"] == round((90 + 90.6 + 93.3 + 91.3) / 4, 1)
     assert summary["weekday_avg_minutes"] == 480.0
     assert summary["weekend_avg_minutes"] == 420.0
-    assert summary["avg_bedtime"] == "23:38"  # 23:10/23:20/23:50/00:10 跨午夜折算后的均值
-    assert summary["avg_wake_time"] == "07:08"
+    assert summary["avg_bedtime"] == "23:28"  # 23:10/23:20/23:50/23:30 跨午夜折算后的均值
+    assert summary["avg_wake_time"] == "07:00"
     assert summary["stage_share_pct"]["deep"] == round(195 / 1800 * 100, 1)
     assert summary["trend"] == {"first_half_avg_minutes": 480.0, "second_half_avg_minutes": 420.0}
 

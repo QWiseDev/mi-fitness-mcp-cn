@@ -96,7 +96,8 @@ def test_sleep_minutes_sums_sessions_and_week_avg(tmp_path):
         )
 
     daily = service.get_metric_series("sleep_minutes", "2026-10-01", "2026-10-31")
-    assert daily == [{"date": "2026-10-16", "value": 500}, {"date": "2026-10-18", "value": 400}]
+    # 按起床日归属：10-16 深夜入睡的会话记到 10-17
+    assert daily == [{"date": "2026-10-17", "value": 500}, {"date": "2026-10-18", "value": 400}]
 
     weekly = service.get_metric_series(
         "sleep_minutes", "2026-10-01", "2026-10-31", granularity="week", aggregation="avg"
@@ -235,11 +236,12 @@ def test_health_report_totals_and_averages(tmp_path):
     day16 = report["days"][0]
     assert (
         day16["steps"] == 5000
-        and day16["sleep_minutes"] == 480
+        and day16["sleep_minutes"] is None
         and day16["resting_heart_rate"] == 60.0
     )
     day17 = report["days"][1]
-    assert day17["steps"] == 7000 and day17["sleep_minutes"] is None and day17["spo2_pct"] is None
+    # 睡眠按起床日归属到 10-17
+    assert day17["steps"] == 7000 and day17["sleep_minutes"] == 480 and day17["spo2_pct"] is None
 
 
 def test_vitality_roundtrip_and_report(tmp_path):

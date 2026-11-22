@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 修复（吸收上游 v0.3.0 安全修复）：**按前缀吊销 Key 的误伤漏洞**——`mif_` 这类短前缀会一次吊销全部 Key；现在要求前缀至少 12 位且唯一匹配（多匹配返回 409），响应改为脱敏展示。密钥比较（静态 Key / Admin Key）改用 `hmac.compare_digest` 恒定时间比较，防时序侧信道。扫码确认后重复轮询 QR 接口不再反复返回完整 API Key（只在确认那一次返回）。仪表盘 Key 列表的标签/User ID/前缀进入 innerHTML 前统一 HTML 转义，阻断存储型 XSS
+- 修复：睡眠按**起床日**归属（吸收上游 v0.4.0）——0:08 入睡与 23:21 入睡的两晚此前按入睡日会落在同一天造成假峰值；现逐晚行与 `sleep_minutes` 序列统一按起床日归属
+- 性能：SQLite 启用 WAL 日志模式（持久化），写不再阻塞读
 - 新增：**每日活力值（活力值/成就域）**——经真实账号探测确认 `vitality` 是 `get_fitness_data_by_time` 的合法数据 key（与 steps/sleep 同一管线，无需专有接口；`vitality/get_achievement_data` 专有端点因 App 装有腾讯 Legu 壳、参数在运行时解密代码中无法静态获取而放弃）。新增 `VitalityRecord` 模型 + `vitality_records` 表（按 user_id+date upsert）+ 适配器 `iter_vitality` + 同步类型 `vitality`（REST/增量同步均已纳入）+ REST `GET /api/vitality` + MCP 工具 `query_vitality`（第 21 个）；`get_health_report` 的逐日行/合计/均值新增 `vitality` 字段
 - 新增：**运动游标真增量**——适配器 `fetch_sport_records_by_watermark`（分页拉取 watermark 之后的变更记录，游标不前进时自动终止）+ `POST /api/workouts/sync-incremental?watermark=N`（只拉变更并 upsert，响应携带新游标供调用方持久化；首次不传即全量刷新，幂等）；运动解析重构为 `_workout_from_item` 供两条路径共用
 - 新增：`get_latest_data` 与 `GET /api/latest` 附带**本地全类型数据新鲜度**——8 种数据类型各自的最新记录时间，时间戳类型带 `age_hours`，agent 可一次判断"哪个类型的数据旧了需要先同步"

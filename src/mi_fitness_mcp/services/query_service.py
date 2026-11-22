@@ -103,8 +103,9 @@ class QueryService:
             return daily
 
         if metric == "sleep_minutes":
+            # 按起床日归属：0:08 入睡与 23:21 入睡的两晚不会挤进同一天
             for row in self.db.query_sleep_sessions(self.user_id, start_date, end_date):
-                date_key = str(row["start_at"])[:10]
+                date_key = str(row["end_at"])[:10]
                 daily[date_key] = daily.get(date_key, 0) + (row.get("duration_minutes") or 0)
             return daily
 
@@ -216,6 +217,7 @@ class QueryService:
         naps = [s for s in sessions if s.get("is_nap")]
 
         nights = []
+        # 按起床日归属（与 sleep_minutes 序列一致）；跨午夜会话归到醒来那天
         for session in sorted(main, key=lambda s: s["start_at"]):
             # 同一分期会有多段（每晚十几段很常见），必须累加而不是覆盖
             stages: dict[str, int] = {}
@@ -226,7 +228,7 @@ class QueryService:
             bed_total = duration + awake
             nights.append(
                 {
-                    "date": str(session["start_at"])[:10],
+                    "date": str(session["end_at"])[:10],  # 起床日
                     "bedtime": str(session["start_at"])[11:16],
                     "wake_time": str(session["end_at"])[11:16],
                     "duration_minutes": session["duration_minutes"],

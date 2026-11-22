@@ -721,6 +721,16 @@ async function listKeys() {
   renderKeysTable(data);
 }
 
+function escapeHtml(value) {
+  // 防 XSS：标签/用户 ID 等来自数据库的文本进入 innerHTML 前必须转义
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 function renderKeysTable(data) {
   const container = $('keysTableWrapper');
   if (!container) return;
@@ -745,14 +755,15 @@ function renderKeysTable(data) {
   `;
 
   data.forEach(k => {
+    const prefix = escapeHtml(k.prefix || k.api_key_prefix || 'mif_sk_...');
     html += `
       <tr>
-        <td><strong>${k.label || '默认'}</strong></td>
-        <td><code>${k.prefix || k.api_key_prefix || 'mif_sk_...'}</code></td>
-        <td>${k.user_id || '--'}</td>
-        <td>${k.created_at || '--'}</td>
+        <td><strong>${escapeHtml(k.label || '默认')}</strong></td>
+        <td><code>${prefix}</code></td>
+        <td>${escapeHtml(k.user_id || '--')}</td>
+        <td>${escapeHtml(k.created_at || '--')}</td>
         <td>
-          <button class="btn btn-danger btn-sm" onclick="revokeKeyByPrefix('${k.prefix || k.api_key_prefix}')">吊销</button>
+          <button class="btn btn-danger btn-sm" onclick="revokeKeyByPrefix('${prefix}')">吊销</button>
         </td>
       </tr>
     `;

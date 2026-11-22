@@ -18,6 +18,7 @@ login_url 确认 → GET /api/auth/qr/poll 轮询到 confirmed 并自动发放 A
 """
 
 import asyncio
+import hmac
 import json
 import os
 import secrets
@@ -179,6 +180,16 @@ async def lifespan(app: FastAPI):
                 await ctx.adapter.close()
 
 
+def _secret_equals(provided: str | None, expected: str | None) -> bool:
+    """恒定时间比较，避免密钥比较的时序侧信道。"""
+    return bool(provided and expected) and hmac.compare_digest(provided.encode(), expected.encode())
+
+
+def _mask(key: str) -> str:
+    """Key 展示脱敏：只留前 8 位与后 4 位。"""
+    return f"{key[:8]}…{key[-4:]}" if len(key) > 12 else "***"
+
+
 async def _gate(x_api_key: str | None = Header(default=None)) -> None:
     """入口闸门：环境静态 Key 设置时强制带头；发了 Key 则校验有效性。"""
     env_key = os.environ.get("MI_FITNESS_API_KEY")
@@ -186,7 +197,7 @@ async def _gate(x_api_key: str | None = Header(default=None)) -> None:
         if env_key:
             raise HTTPException(status_code=401, detail="Missing X-API-Key header")
         return
-    if env_key and x_api_key == env_key:
+    if _secret_equals(x_api_key, env_key):
         return
     db: Database = app.state.db
     with db._get_connection() as conn:
@@ -281,7 +292,7 @@ def _require_admin(request: Request) -> None:
     env_key = os.environ.get("MI_FITNESS_ADMIN_KEY")
     provided = request.headers.get("x-admin-key")
     if env_key:
-        if provided != env_key:
+        if not _secret_equals(provided, env_key):
             raise HTTPException(status_code=401, detail="Invalid X-Admin-Key")
         return
     client_host = request.client.host if request.client else ""
@@ -401,20 +412,24 @@ async def list_keys(request: Request) -> dict:
 
 @app.delete("/api/auth/keys/{key_prefix}")
 async def revoke_key(key_prefix: str, request: Request) -> dict:
+    """按前缀吊销。前缀至少 12 位且必须唯一匹配，避免 `mif_` 一次吊销全部 Key。"""
     _require_admin(request)
+    if len(key_prefix) < 12:
+        raise HTTPException(status_code=400, detail="前缀至少 12 位（mif_sk_ 之后再取几位）")
     db: Database = request.app.state.db
     with db._get_connection() as conn:
-        rows = conn.execute("SELECT key FROM api_keys").fetchall()
+        rows = conn.execute("SELECT key FROM api_keys WHERE revoked = 0").fetchall()
         matches = [
             r["key"] for r in rows if r["key"] == key_prefix or r["key"].startswith(key_prefix)
         ]
         if not matches:
             raise HTTPException(status_code=404, detail="没有匹配的 Key（可用完整 Key 或唯一前缀）")
-        for k in matches:
-            conn.execute("UPDATE api_keys SET revoked = 1 WHERE key = ?", (k,))
-            delete_api_key_secret(k)
+        if len(matches) > 1:
+            raise HTTPException(status_code=409, detail="前缀匹配了多个 Key，请提供更长的前缀")
+        conn.execute("UPDATE api_keys SET revoked = 1 WHERE key = ?", (matches[0],))
         conn.commit()
-    return {"status": "ok", "revoked": matches}
+    delete_api_key_secret(matches[0])
+    return {"status": "ok", "revoked": [_mask(matches[0])]}
 
 
 # ---------------------------------------------------------------- 扫码登录
@@ -492,10 +507,16 @@ async def qr_poll(token: str, request: Request) -> dict:
     if sess is None:
         raise HTTPException(status_code=404, detail="Unknown qr_token")
     if sess["status"] == "confirmed":
+        # 完整 Key 只在确认后的第一次轮询返回一次，避免重复轮询泄露
+        api_key = sess.get("api_key")
+        if api_key:
+            sess["api_key"] = None
+            return {"status": "confirmed", "api_key": api_key, "user_id": sess.get("user_id")}
         return {
             "status": "confirmed",
-            "api_key": sess.get("api_key"),
+            "api_key": None,
             "user_id": sess.get("user_id"),
+            "note": "Key 已在确认后的首次轮询发放，请在首次返回中保存",
         }
     if time.time() - sess["created_at"] > sess["expires_in"] + 10:
         sess["status"] = "expired"
@@ -530,8 +551,8 @@ async def qr_poll(token: str, request: Request) -> dict:
         }
     key = _create_key_record(state.db, user_id, pass_token, sess["region"], "qr-login")
     sess["status"] = "confirmed"
-    sess["api_key"] = key
     sess["user_id"] = user_id
+    # 完整 Key 只随本次响应返回一次，不驻留会话（后续轮询不再泄露）
     return {"status": "confirmed", "api_key": key, "user_id": user_id}
 
 

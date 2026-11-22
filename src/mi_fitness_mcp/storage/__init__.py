@@ -37,6 +37,9 @@ class Database:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         with self._get_connection() as conn:
+            # WAL：写入不再阻塞读，批量 UPSERT 性能显著提升（持久化设置）
+            conn.execute("PRAGMA journal_mode=WAL")
+
             # 日常活动表
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS daily_activity (
