@@ -6,6 +6,7 @@ import logging
 import os
 import random
 import struct
+import time
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta, timezone
@@ -89,7 +90,7 @@ def _rc4_crypt(key: bytes, payload: bytes) -> bytes:
 
 def _gen_nonce() -> bytes:
     raw = bytearray(os.urandom(8))
-    raw.extend(struct.pack(">I", int(datetime.now().timestamp() // 60)))
+    raw.extend(struct.pack(">I", int(time.time() // 60)))
     return bytes(raw)
 
 

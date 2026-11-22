@@ -43,3 +43,6 @@ config.json
 *.zip
 .backup/
 *.apk
+
+# Local tooling
+.claude/

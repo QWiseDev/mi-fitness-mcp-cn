@@ -29,7 +29,7 @@ async def get_workout_detail(
     workout_id 为本地库主键（{sid}_{key}_{time}）；云端摘要按记录的
     time 字段（本地 source_record_id）在运动当日窗口内回查。
     """
-    workout = db.get_workout_by_id(user_id, workout_id)
+    workout = db.get_workout_by_workout_id(user_id, workout_id)
     if workout is None:
         raise ValueError(f"未找到运动记录: {workout_id}")
 
@@ -67,8 +67,8 @@ async def get_workout_detail(
 
     detail["heart_rate_samples"] = [
         {"timestamp": row["timestamp"], "bpm": row["bpm"]}
-        for row in db.query_heart_rate_samples(
-            user_id, start_at.date().isoformat(), end_at.date().isoformat()
+        for row in db.query(
+            "heart_rate", user_id, start_at.date().isoformat(), end_at.date().isoformat()
         )
         if row.get("sample_type") == "workout" and start_at <= _parse_ts(row["timestamp"]) <= end_at
     ]

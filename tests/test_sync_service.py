@@ -7,17 +7,23 @@ class FakeAdapter:
     def is_connected(self):
         return True
 
+    def get_user_id(self):
+        return "u1"
+
     async def iter_daily_activity(self, start_date, end_date):
         if False:
             yield None
 
 
 class FakeDatabase:
-    def get_sync_state(self, data_type):
+    def get_sync_state(self, user_id, data_type):
         return None
 
-    def update_sync_state(self, data_type, timestamp):
+    def update_sync_state(self, user_id, data_type, timestamp):
         raise AssertionError("empty sync must not advance cursor")
+
+    def upsert(self, data_type, records):
+        return {"added": 0, "updated": 0, "skipped": 0}
 
 
 @pytest.mark.asyncio
@@ -123,8 +129,6 @@ async def test_concurrent_sync_is_rejected_instead_of_queued(monkeypatch):
     )
     await entered.wait()
     with pytest.raises(RuntimeError, match="already in progress"):
-        await service.sync_data_type(
-            "daily_activity", "2026-07-12", "2026-07-12"
-        )
+        await service.sync_data_type("daily_activity", "2026-07-12", "2026-07-12")
     release.set()
     await first

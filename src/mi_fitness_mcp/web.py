@@ -24,7 +24,6 @@ from flask import (
 
 from mi_fitness_mcp.security import default_allowed_hosts, host_allowed
 
-# Assets directory: src/mi_fitness_mcp/web_assets or fallback to testpage
 PACKAGE_DIR = Path(__file__).resolve().parent
 DEFAULT_ASSETS_DIR = PACKAGE_DIR / "web_assets"
 
@@ -40,16 +39,18 @@ def create_app(
 
     app = Flask(
         __name__,
-        static_folder=str(assets_path / "static") if (assets_path / "static").exists() else str(assets_path),
+        static_folder=str(assets_path / "static")
+        if (assets_path / "static").exists()
+        else str(assets_path),
         static_url_path="/static",
-        template_folder=str(assets_path / "templates") if (assets_path / "templates").exists() else str(assets_path),
+        template_folder=str(assets_path / "templates")
+        if (assets_path / "templates").exists()
+        else str(assets_path),
     )
 
     # Configuration with env fallbacks
     app.config["BACKEND_URL"] = (
-        backend_url
-        or os.environ.get("MI_FITNESS_API_URL")
-        or "http://127.0.0.1:8321"
+        backend_url or os.environ.get("MI_FITNESS_API_URL") or "http://127.0.0.1:8321"
     ).rstrip("/")
     app.config["API_KEY"] = api_key or os.environ.get("MI_FITNESS_API_KEY")
     app.config["ADMIN_KEY"] = admin_key or os.environ.get("MI_FITNESS_ADMIN_KEY")
@@ -63,6 +64,23 @@ def create_app(
         if not host_allowed(request.host, default_allowed_hosts()):
             return jsonify({"detail": "Host not allowed"}), 403
         return None
+
+    @app.after_request
+    def _security_headers(resp):
+        # 仪表盘会代理健康数据与 API Key：只允许同源脚本，禁止被嵌入其它页面，不外泄 Referer。
+        # style-src 需要 'unsafe-inline'：图表的柱高/颜色以 style 属性内联；脚本仍严格同源。
+        resp.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; "
+            "base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        )
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("Referrer-Policy", "no-referrer")
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        if request.path == "/" or request.path.startswith("/proxy"):
+            resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     @app.route("/")
     def index():
@@ -96,20 +114,33 @@ def create_app(
         except Exception as e:
             detail = str(e)
 
-        return jsonify({
-            "proxy": "running",
-            "proxy_type": "Flask (Python)",
-            "backend_url": backend,
-            "backend_reachable": healthy,
-            "backend_latency_ms": latency_ms,
-            "has_server_api_key": bool(app.config["API_KEY"]),
-            "has_server_admin_key": bool(app.config["ADMIN_KEY"]),
-            "error_detail": detail if not healthy else None,
-        })
+        return jsonify(
+            {
+                "proxy": "running",
+                "proxy_type": "Flask (Python)",
+                "backend_url": backend,
+                "backend_reachable": healthy,
+                "backend_latency_ms": latency_ms,
+                "has_server_api_key": bool(app.config["API_KEY"]),
+                "has_server_admin_key": bool(app.config["ADMIN_KEY"]),
+                "error_detail": detail if not healthy else None,
+            }
+        )
 
-    @app.route("/proxy", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
-    @app.route("/proxy/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
-    @app.route("/proxy/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
+    @app.route(
+        "/proxy",
+        defaults={"subpath": ""},
+        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    )
+    @app.route(
+        "/proxy/",
+        defaults={"subpath": ""},
+        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    )
+    @app.route(
+        "/proxy/<path:subpath>",
+        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    )
     def proxy(subpath: str = ""):
         """Reverse proxy all requests to the backend FastAPI service."""
         backend = app.config["BACKEND_URL"]
@@ -149,7 +180,12 @@ def create_app(
             elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
 
             # Build response back to browser
-            excluded_headers = {"content-encoding", "content-length", "transfer-encoding", "connection"}
+            excluded_headers = {
+                "content-encoding",
+                "content-length",
+                "transfer-encoding",
+                "connection",
+            }
             response_headers: list[tuple[str, str]] = [
                 (k, v)
                 for k, v in upstream_resp.headers.items()

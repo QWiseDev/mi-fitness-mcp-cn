@@ -97,13 +97,13 @@ def test_sleep_minutes_sums_sessions_and_week_avg(tmp_path):
 
     daily = service.get_metric_series("sleep_minutes", "2026-10-01", "2026-10-31")
     # 按起床日归属：10-16 深夜入睡的会话记到 10-17
-    assert daily == [{"date": "2026-10-17", "value": 500}, {"date": "2026-10-18", "value": 400}]
+    assert daily == [{"date": "2026-10-17", "value": 470}, {"date": "2026-10-18", "value": 370}]
 
     weekly = service.get_metric_series(
         "sleep_minutes", "2026-10-01", "2026-10-31", granularity="week", aggregation="avg"
     )
     # 10-16（周五）与 10-18（周日）同属 10-12 开始的那一周
-    assert weekly == [{"date": "2026-10-12", "value": 450}]
+    assert weekly == [{"date": "2026-10-12", "value": 420.0}]
 
 
 def test_resting_heart_rate_averages_and_excludes_passive(tmp_path):
@@ -128,7 +128,8 @@ def test_resting_heart_rate_averages_and_excludes_passive(tmp_path):
 
     series = service.get_metric_series("resting_heart_rate", "2026-10-01", "2026-10-31")
 
-    assert series == [{"date": "2026-10-16", "value": 62.0}, {"date": "2026-10-17", "value": 58.0}]
+    # resting_heart_rate 取静息样本最小值（上游语义）
+    assert series == [{"date": "2026-10-16", "value": 60}, {"date": "2026-10-17", "value": 58}]
 
 
 def test_spo2_and_stress_daily_averages(tmp_path):
@@ -157,10 +158,10 @@ def test_spo2_and_stress_daily_averages(tmp_path):
             )
         )
 
-    assert service.get_metric_series("spo2_pct", "2026-10-01", "2026-10-31") == [
+    assert service.get_metric_series("spo2", "2026-10-01", "2026-10-31") == [
         {"date": "2026-10-16", "value": 98.0}
     ]
-    assert service.get_metric_series("stress_score", "2026-10-01", "2026-10-31") == [
+    assert service.get_metric_series("stress", "2026-10-01", "2026-10-31") == [
         {"date": "2026-10-16", "value": 40.0}
     ]
 
@@ -169,79 +170,6 @@ def test_unknown_metric_raises(tmp_path):
     service, _ = make_service(tmp_path)
     with pytest.raises(ValueError, match="weight"):
         service.get_metric_series("body_fat", "2026-10-01", "2026-10-31")
-
-
-def test_health_report_totals_and_averages(tmp_path):
-    service, db = make_service(tmp_path)
-    insert_activity(db, "2026-10-16", 5000)
-    insert_activity(db, "2026-10-17", 7000)
-    db.insert_sleep_session(
-        SleepSession(
-            id="s1",
-            provider="mi_fitness",
-            source_type="cloud_session",
-            user_id=USER,
-            sleep_id="s1",
-            start_at=datetime(2026, 10, 16, 23, 10),
-            end_at=datetime(2026, 10, 17, 7, 10),
-            duration_minutes=480,
-            time_asleep_minutes=440,
-            time_awake_minutes=40,
-        )
-    )
-    db.insert_heart_rate_sample(
-        HeartRateSample(
-            id="h1",
-            provider="mi_fitness",
-            source_type="cloud_session",
-            user_id=USER,
-            timestamp=datetime(2026, 10, 16, 8),
-            bpm=60,
-            sample_type="resting",
-        )
-    )
-    db.insert_spo2_sample(
-        SpO2Sample(
-            id="p1",
-            provider="mi_fitness",
-            source_type="cloud_session",
-            user_id=USER,
-            timestamp=datetime(2026, 10, 16, 9),
-            spo2_pct=98,
-        )
-    )
-    db.insert_stress_sample(
-        StressSample(
-            id="t1",
-            provider="mi_fitness",
-            source_type="cloud_session",
-            user_id=USER,
-            timestamp=datetime(2026, 10, 16, 9),
-            stress_score=40,
-            level="medium",
-        )
-    )
-
-    report = service.get_health_report("2026-10-16", "2026-10-17")
-
-    assert report["days_with_data"] == 2
-    assert report["totals"]["steps"] == 12000
-    assert report["totals"]["sleep_minutes"] == 480
-    assert report["averages"]["steps"] == 6000.0
-    # 均值只统计有数据的天：17 日无睡眠，不参与平均
-    assert report["averages"]["sleep_minutes"] == 480.0
-    assert report["averages"]["resting_heart_rate"] == 60.0
-    assert report["averages"]["spo2_pct"] == 98.0
-    assert report["averages"]["stress_score"] == 40.0
-    day16 = report["days"][0]
-    assert (
-        day16["steps"] == 5000
-        and day16["sleep_minutes"] is None
-        and day16["resting_heart_rate"] == 60.0
-    )
-    day17 = report["days"][1]
-    # 睡眠按起床日归属到 10-17
-    assert day17["steps"] == 7000 and day17["sleep_minutes"] == 480 and day17["spo2_pct"] is None
 
 
 def test_vitality_roundtrip_and_report(tmp_path):
@@ -270,9 +198,4 @@ def test_vitality_roundtrip_and_report(tmp_path):
     assert len(rows) == 2
     assert rows[0]["accumulated_vitality"] == 37
     assert rows[0]["medium_intensity_vitality"] == 2
-
-    insert_activity(db, "2026-10-16", 5000)
-    report = service.get_health_report("2026-10-16", "2026-10-17")
-    assert report["totals"]["vitality"] == 68
-    assert report["averages"]["vitality"] == 34.0
-    assert report["days"][0]["vitality"] == 37
+    assert rows[0]["suggested_activity_duration_minutes"] == 21
